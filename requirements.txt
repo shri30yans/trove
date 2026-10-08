@@ -9,6 +9,7 @@ python-dotenv==1.1.0
 email-validator==2.2.0
 httpx==0.28.1
 google-auth==2.40.3
+requests==2.32.4
 
 # PostgreSQL + Supabase Storage (S3 protocol)
 asyncpg==0.30.0
