@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+  {% if account_email %}<p>Signed in as <strong>{{ account_email }}</strong>.</p>{% endif %}
+  <p><strong>{{ client_name }}</strong> is requesting access to your Trove account.</p>
+  {% if client_uri %}<p><small>Service: {{ client_uri }}</small></p>{% endif %}
+  {% if redirect_uri %}<p><small>Returns to: {{ redirect_uri }}</small></p>{% endif %}
+  <div class="scope">
+    <strong>Trove tool access</strong>
+    <p>Read your notes and Spaces, search notes using Trove search, update Space descriptions, and revoke this app connection when asked.</p>
+    <p>On every tool call, Trove checks that this OAuth session is still active.</p>
+    <p>These Trove tools are granted together. OAuth profile scopes do not limit access to the tools listed above.</p>
+    <strong>OAuth profile scopes requested</strong><p>{{ scopes }}</p>
+  </div>
+  <form method="post" action="/oauth/consent/decision">
+    <input type="hidden" name="authorization_id" value="{{ authorization_id }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button name="action" value="approve" type="submit">Allow access</button>
+    <button class="secondary" name="action" value="deny" type="submit">Deny</button>
+  </form>
+  <p><small>This connection can be revoked from the connected app by asking it to disconnect Trove.</small></p>
+{% endblock %}

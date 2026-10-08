@@ -1,0 +1,20 @@
+appId: com.trove.memory
+---
+# Keyboard invariant: entering Search always raises the keyboard, including repeat
+# entries. Regression: an isFocused() guard skipped refocus because the native input
+# kept focus after navigation dismissed the keyboard.
+- launchApp
+- tapOn: "Search"
+- assertVisible: "space"
+- tapOn: "Back"
+- tapOn: "Search"
+- assertVisible: "space"
+- assertVisible:
+    id: "search-editor"
+- tapOn:
+    id: "search-editor"
+- inputText: "Synthetic keyboard clearance"
+- assertVisible:
+    id: "search-dock"
+- assertVisible: "Filter"
+- takeScreenshot: search-keyboard-clearance.png

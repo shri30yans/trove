@@ -1,0 +1,13 @@
+appId: com.trove.memory
+---
+- launchApp
+- tapOn: "Open profile"
+- assertVisible: "Light theme"
+- tapOn: "Dark theme"
+- takeScreenshot: theme-dark.png
+- tapOn: "Ultra dark theme"
+- takeScreenshot: theme-ultra.png
+- tapOn: "More themes"
+- tapOn: "Previous themes"
+- tapOn: "Light theme"
+- takeScreenshot: theme-light.png

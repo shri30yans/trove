@@ -1,0 +1,16 @@
+appId: com.trove.memory
+---
+# Draft only: exercise the shared keyboard wrapper without persisting a Space.
+- launchApp
+- tapOn: "Create a Space"
+- assertVisible: "space"
+- tapOn: "Space name"
+- inputText: "Synthetic Space keyboard check"
+- assertVisible: "Create Space"
+- takeScreenshot: space-keyboard.png
+- hideKeyboard
+- tapOn: "Back"
+- tapOn: "Create a Space"
+- assertVisible: "space"
+- takeScreenshot: space-keyboard-reentered.png
+- tapOn: "Back"

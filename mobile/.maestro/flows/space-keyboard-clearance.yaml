@@ -1,0 +1,18 @@
+appId: com.trove.memory
+---
+# Synthetic draft only. Do not submit a Space.
+- launchApp
+- tapOn: "Explore"
+- tapOn: "Create a Space"
+- assertVisible: "space"
+- assertVisible: "Space name"
+- inputText: "Synthetic Space"
+- assertVisible: "Create Space"
+- takeScreenshot: space-keyboard-clearance.png
+- hideKeyboard
+- tapOn: "Back"
+- tapOn: "Create a Space"
+- assertVisible: "space"
+- assertVisible: "Create Space"
+- takeScreenshot: space-keyboard-reentered.png
+- tapOn: "Back"

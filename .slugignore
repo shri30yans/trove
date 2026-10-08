@@ -1,0 +1,19 @@
+# Heroku only needs the Python API and its runtime migrations.
+mobile/
+legacy/
+design-reference/
+docs/
+tests/
+tools/
+.agents/
+.codex/
+.mcp.json
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+requirements-dev.txt
+TROVE_PRODUCT_PLAN.md
+Trove-Is-Personal-Memory-System-Not.zip

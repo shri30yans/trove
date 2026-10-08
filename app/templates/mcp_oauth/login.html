@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+  {% if message %}<p class="error">{{ message }}</p>{% endif %}
+  <p>Sign in to Trove to review this account connection request.</p>
+  <form method="post" action="/oauth/consent/login">
+    <input type="hidden" name="authorization_id" value="{{ authorization_id }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" maxlength="320" autocomplete="username" required>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" maxlength="256" autocomplete="current-password" required>
+    <button type="submit">Continue</button>
+  </form>
+  <p><small>Use the email and password you use to sign in to Trove. Sign-in credentials are checked by Trove's configured provider over HTTPS.</small></p>
+{% endblock %}

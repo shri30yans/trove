@@ -1,0 +1,59 @@
+# Tooling configuration only — Trove is deployed from requirements.txt, not built as a package.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q --strict-markers --strict-config"
+markers = [
+  "integration: needs a live Postgres and the ONNX models; gated on TROVE_INTEGRATION_DSN",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["legacy", "mobile", "design-reference", "tools"]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "W",
+  "I",
+  "UP",
+  "B",
+  "A",
+  "BLE",
+  "C4", "SIM",
+  "RET", "RSE",
+  "ARG", "PLE", "PLW",
+  "TID", "PT",
+  "T20",
+  "RUF100",
+]
+ignore = [
+  "E501",     # formatting owns line length
+  "B008",     # FastAPI's Depends() in signatures is the idiom
+  "SIM105",   # try/except/pass keeps the reason comment on the except line
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG001", "ANN", "PLR2004", "PT011"]
+# The pool is a deliberate module singleton; one process owns one pool.
+"app/db.py" = ["PLW0603"]
+# FastAPI's lifespan and exception-handler signatures require arguments they do not use.
+"app/main.py" = ["ARG001"]
+# The migrator is a CLI: its output is the interface.
+"app/migrate.py" = ["T201"]
+# ANN401 (no Any) is a Phase 2 goal: it needs Pydantic response models to replace dict DTOs.
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unreachable = true

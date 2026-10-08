@@ -1,0 +1,43 @@
+appId: com.trove.memory
+---
+# Synthetic draft only; this flow does not submit content.
+- launchApp
+- tapOn: "Open profile"
+- tapOn: "Light theme"
+- tapOn: "Back"
+- tapOn: "Create"
+- assertVisible: "space"
+- assertVisible:
+    id: "capture-composer"
+- inputText: "Synthetic composer verification. The editor must keep the same height when focused."
+- takeScreenshot: capture-light.png
+- hideKeyboard
+- tapOn: "Back"
+- tapOn: "Create"
+- assertVisible: "space"
+- assertVisible:
+    id: "capture-editor"
+- takeScreenshot: capture-reentered.png
+- tapOn: "Back"
+- tapOn: "Open profile"
+- tapOn: "Dark theme"
+- tapOn: "Back"
+- tapOn: "Create"
+- assertVisible: "space"
+- takeScreenshot: capture-dark.png
+- tapOn: "Back"
+- tapOn: "Open profile"
+- tapOn: "Ultra dark theme"
+- tapOn: "Back"
+- tapOn: "Create"
+- assertVisible: "space"
+- takeScreenshot: capture-ultra-dark.png
+- tapOn: "Back"
+- assertVisible:
+    id: "capture-editor"
+- assertVisible: "Save memory"
+- tapOn:
+    id: "capture-editor"
+- inputText: "Synthetic keyboard clearance"
+- assertVisible: "Save memory"
+- takeScreenshot: capture-keyboard-clearance.png

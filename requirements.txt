@@ -1,0 +1,22 @@
+# Web API
+fastapi==0.115.12
+mcp==1.30.0
+sse-starlette==2.2.1
+uvicorn[standard]==0.34.2
+pydantic==2.11.7
+jinja2==3.1.6
+python-dotenv==1.1.0
+email-validator==2.2.0
+httpx==0.28.1
+google-auth==2.40.3
+
+# PostgreSQL + Supabase Storage (S3 protocol)
+asyncpg==0.30.0
+boto3==1.38.33
+
+# Link preview extraction
+beautifulsoup4==4.13.4
+lxml==5.4.0
+
+# Auth
+PyJWT[crypto]==2.10.1

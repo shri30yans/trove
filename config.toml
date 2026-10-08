@@ -1,0 +1,28 @@
+# Non-secret settings shared by the Trove API.
+# Environment variables (including values loaded from local.env/stage.env/prod.env) override these.
+
+[defaults]
+API_HOST = "0.0.0.0"
+API_PORT = 4000
+S3_BUCKET = "trove-private"
+S3_FORCE_PATH_STYLE = true
+MAX_UPLOAD_BYTES = 52428800
+VERTEX_LOCATION = "us"
+AUTH_AUDIENCE = "authenticated"
+MCP_PUBLIC_URL = "http://localhost:4000/mcp"
+
+[environments.local]
+CORS_ORIGIN = "*"
+PROXY_TRUSTED_IPS = "*"
+
+[environments.prod]
+CORS_ORIGIN = "https://zyphrlabs.com"
+# Deliberately trust forwarded headers from every source; this allows X-Forwarded-For spoofing.
+PROXY_TRUSTED_IPS = "*"
+S3_ENDPOINT = "https://enupfdacvbaugbotkrie.storage.supabase.co/storage/v1/s3"
+S3_REGION = "ap-southeast-2"
+VERTEX_PROJECT_ID = "gen-lang-client-0736864310"
+AUTH_JWKS_URL = "https://enupfdacvbaugbotkrie.supabase.co/auth/v1/.well-known/jwks.json"
+AUTH_ISSUER = "https://enupfdacvbaugbotkrie.supabase.co/auth/v1"
+SUPABASE_URL = "https://enupfdacvbaugbotkrie.supabase.co"
+MCP_PUBLIC_URL = "https://api.trove.zyphrlabs.com/mcp"

@@ -1,0 +1,81 @@
+{
+  "expo": {
+    "name": "Trove",
+    "slug": "trove-memory",
+    "scheme": "trove",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.trove.memory"
+    },
+    "android": {
+      "package": "com.trove.memory",
+      "softwareKeyboardLayoutMode": "resize",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-audio",
+      [
+        "expo-share-intent",
+        {
+          "iosActivationRules": {
+            "NSExtensionActivationSupportsText": true,
+            "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
+            "NSExtensionActivationSupportsWebPageWithMaxCount": 1,
+            "NSExtensionActivationSupportsImageWithMaxCount": 1,
+            "NSExtensionActivationSupportsMovieWithMaxCount": 1,
+            "NSExtensionActivationSupportsFileWithMaxCount": 1
+          },
+          "androidIntentFilters": [
+            "text/*",
+            "image/*",
+            "video/*",
+            "audio/*",
+            "application/*",
+            "*/*"
+          ],
+          "androidMultiIntentFilters": [
+            "image/*",
+            "video/*",
+            "audio/*",
+            "*/*"
+          ]
+        }
+      ],
+      "expo-secure-store",
+      "expo-sharing",
+      "expo-video",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Trove to attach photos and videos to your memories.",
+          "cameraPermission": "Allow Trove to take photos for your memories.",
+          "microphonePermission": false
+        }
+      ],
+      "expo-sqlite",
+      [
+        "expo-navigation-bar",
+        {
+          "enforceContrast": false
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

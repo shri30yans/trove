@@ -1,0 +1,23 @@
+appId: com.trove.memory
+---
+# Keyboard invariant: opening the attachment tray keeps the keyboard up and shows
+# the camera, library, and file options. The composer must never dismiss the keyboard.
+- launchApp
+- tapOn: "Create"
+- assertVisible: "space"
+- takeScreenshot: capture-keyboard-clearance.png
+- tapOn:
+    text: "Add an attachment"
+- assertVisible: "space"
+- assertVisible: "Camera"
+- assertVisible: "Photos and videos"
+- assertVisible: "Files"
+- tapOn:
+    text: "Hide attachment options"
+- assertNotVisible: "Photos and videos"
+- tapOn: "Choose a Space for this memory"
+- assertVisible: "space"
+- assertVisible: "All memories"
+- tapOn: "Save without a Space"
+- assertVisible: "space"
+- takeScreenshot: capture-space-selected.png
