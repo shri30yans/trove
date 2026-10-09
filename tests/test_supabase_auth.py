@@ -7,26 +7,19 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from app import supabase_auth
 from app.config import Config
 from app.errors import ApiError
+from tests.config_fixture import synthetic_config
 
 
 def _config() -> Config:
-    return Config(
-        RUN_ENV="local",
-        DATABASE_URL="postgresql://u:p@127.0.0.1:5432/trove",
-        S3_ENDPOINT="http://127.0.0.1:54321",
-        S3_REGION="local",
-        S3_BUCKET="trove-private",
-        S3_ACCESS_KEY="test",
-        S3_SECRET_KEY="test",
+    return synthetic_config(
+        SUPABASE_URL="https://project.example.test",
         AUTH_JWKS_URL="https://project.example.test/auth/v1/.well-known/jwks.json",
         AUTH_ISSUER="https://project.example.test/auth/v1",
-        SUPABASE_URL="https://project.example.test",
-        SUPABASE_AUTH_API_KEY="publishable-test-key",
-        SUPABASE_SECRET_KEY="server-only-service-role-key",
     )
 
 
@@ -98,12 +91,162 @@ async def test_sign_up_returns_session_when_email_confirmation_is_disabled(monke
 
 
 @pytest.mark.asyncio
-async def test_sign_up_reports_email_confirmation_when_provider_returns_no_session(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_sign_up_reports_email_confirmation_when_provider_returns_no_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _install_provider(monkeypatch, 200, {"id": "new-user", "access_token": None, "refresh_token": None})
 
     assert await supabase_auth.sign_up("new@example.test", "synthetic-password") == {
         "status": "email_confirmation_required"
     }
+
+
+@pytest.mark.asyncio
+async def test_sign_up_reports_a_provider_email_failure_as_email_delivery(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GoTrue hides both outcomes behind `unexpected_failure`, so the copy must still say why."""
+    _install_provider(monkeypatch, 500, {"error_code": "unexpected_failure", "msg": "Error sending confirmation email"})
+
+    with pytest.raises(ApiError) as raised:
+        await supabase_auth.sign_up("new@example.test", "synthetic-password")
+
+    assert raised.value.status_code == 503
+    assert raised.value.code == "auth_email_unavailable"
+    assert "confirmation email" in raised.value.message
+
+
+@pytest.mark.asyncio
+async def test_sign_up_reports_an_exhausted_email_budget_as_email_delivery(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_provider(
+        monkeypatch, 429, {"error_code": "over_email_send_rate_limit", "msg": "email rate limit exceeded"}
+    )
+
+    with pytest.raises(ApiError) as raised:
+        await supabase_auth.sign_up("new@example.test", "synthetic-password")
+
+    assert raised.value.code == "auth_email_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_sign_up_deep_links_confirmation_back_to_the_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests = _install_provider(
+        monkeypatch,
+        200,
+        {"id": "new-user", "access_token": None, "refresh_token": None},
+    )
+
+    assert await supabase_auth.sign_up("new@example.test", "synthetic-password") == {
+        "status": "email_confirmation_required"
+    }
+    assert requests[0].url.params["redirect_to"] == "trove://confirm-email"
+
+
+@pytest.mark.asyncio
+async def test_resend_confirmation_targets_the_signup_flow_with_the_app_deep_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests = _install_provider(monkeypatch, 200, {})
+
+    await supabase_auth.resend_confirmation("pending@example.test")
+
+    assert requests[0].url.path == "/auth/v1/resend"
+    assert requests[0].url.params["redirect_to"] == "trove://confirm-email"
+    assert json.loads(requests[0].content) == {"type": "signup", "email": "pending@example.test"}
+
+
+@pytest.mark.asyncio
+async def test_resend_confirmation_maps_nothing_to_send_to_a_neutral_not_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_provider(monkeypatch, 404, {"msg": "User not found"})
+
+    with pytest.raises(ApiError) as raised:
+        await supabase_auth.resend_confirmation("unknown@example.test")
+
+    assert raised.value.code == "email_not_pending"
+
+
+@pytest.mark.asyncio
+async def test_resend_confirmation_rate_limit_is_a_retryable_429(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_provider(
+        monkeypatch, 429, {"error_code": "over_email_send_rate_limit", "msg": "email rate limit exceeded"}
+    )
+
+    with pytest.raises(ApiError) as raised:
+        await supabase_auth.resend_confirmation("pending@example.test")
+
+    assert raised.value.status_code == 429
+    assert raised.value.code == "confirmation_rate_limited"
+
+
+@pytest.mark.asyncio
+async def test_confirm_email_verifies_the_signup_token_hash(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests = _install_provider(monkeypatch, 200, {"id": "confirmed-user"})
+
+    await supabase_auth.confirm_email("synthetic-token-hash")
+
+    assert requests[0].url.path == "/auth/v1/verify"
+    assert json.loads(requests[0].content) == {"type": "signup", "token_hash": "synthetic-token-hash"}
+
+
+@pytest.mark.asyncio
+async def test_confirm_email_maps_an_expired_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_provider(monkeypatch, 400, {"msg": "Token has expired or is invalid"})
+
+    with pytest.raises(ApiError) as raised:
+        await supabase_auth.confirm_email("stale-token-hash")
+
+    assert raised.value.status_code == 400
+    assert raised.value.code == "email_link_expired"
+
+
+@pytest.mark.asyncio
+async def test_confirm_email_maps_an_invalid_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_provider(monkeypatch, 400, {"msg": "Invalid token"})
+
+    with pytest.raises(ApiError) as raised:
+        await supabase_auth.confirm_email("bad-token-hash")
+
+    assert raised.value.code == "email_link_invalid"
+
+
+@pytest.mark.asyncio
+async def test_password_reset_reports_a_provider_email_failure_as_email_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_provider(monkeypatch, 500, {"error_code": "unexpected_failure", "msg": "Error sending recovery email"})
+
+    with pytest.raises(ApiError) as raised:
+        await supabase_auth.request_password_reset("user@example.test")
+
+    assert raised.value.code == "auth_email_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_sign_in_failures_never_take_the_email_delivery_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_provider(
+        monkeypatch, 429, {"error_code": "over_email_send_rate_limit", "msg": "email rate limit exceeded"}
+    )
+
+    with pytest.raises(ApiError) as raised:
+        await supabase_auth.sign_in("user@example.test", "wrong-password")
+
+    assert raised.value.code == "auth_rate_limited"
+
+    _install_provider(monkeypatch, 500, {"error_code": "unexpected_failure", "msg": "Error sending confirmation email"})
+    with pytest.raises(ApiError) as raised:
+        await supabase_auth.sign_in("user@example.test", "wrong-password")
+
+    assert raised.value.code == "auth_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_unrelated_provider_failures_stay_outages(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_provider(monkeypatch, 500, {"error_code": "unexpected_failure", "msg": "Database error saving new user"})
+
+    with pytest.raises(ApiError) as raised:
+        await supabase_auth.sign_up("new@example.test", "synthetic-password")
+
+    assert raised.value.code == "auth_unavailable"
 
 
 @pytest.mark.asyncio
@@ -181,15 +324,14 @@ async def test_unavailable_supabase_is_reported_as_an_outage(monkeypatch: pytest
 
 
 @pytest.mark.asyncio
-async def test_missing_provider_configuration_is_actionable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        supabase_auth,
-        "get_config",
-        lambda: _config().model_copy(update={"SUPABASE_URL": None, "SUPABASE_AUTH_API_KEY": None}),
-    )
+async def test_a_credential_less_config_cannot_be_built_so_the_proxy_never_checks_for_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The boot gate owns this, which is why `sign_in` has no "not configured" branch."""
+    with pytest.raises(ValidationError):
+        synthetic_config(SUPABASE_URL="", SUPABASE_AUTH_API_KEY="")
 
+    _install_provider(monkeypatch, 400, {"msg": "Invalid login credentials"})
     with pytest.raises(ApiError) as raised:
-        await supabase_auth.sign_in("user@example.test", "synthetic-password")
-
-    assert raised.value.status_code == 503
-    assert raised.value.code == "auth_not_configured"
+        await supabase_auth.sign_in("user@example.test", "wrong-password")
+    assert raised.value.code == "invalid_credentials"

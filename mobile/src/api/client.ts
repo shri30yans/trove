@@ -1,13 +1,18 @@
 import type { z } from 'zod';
 import { z as zod } from 'zod';
 import * as SecureStore from 'expo-secure-store';
-import { parseContract } from './schemas/common';
+import { parseContract, parseRequest } from './schemas/common';
 import {
   authCredentialsSchema,
   authSessionSchema,
   accountDeletionRequestSchema,
   accountDeletionStatusSchema,
   signedInResponseSchema,
+  signUpResponseSchema,
+  passwordResetResponseSchema,
+  passwordUpdateResponseSchema,
+  resendConfirmationResponseSchema,
+  confirmEmailResponseSchema,
   storedAuthSessionSchema,
 } from './schemas/auth';
 import { CONNECTION_MESSAGE, apiFailureMessage, apiFailureCode } from './messages';
@@ -117,6 +122,59 @@ export async function signInWithPassword(email: string, password: string) {
   await persistProviderSession(result.session);
 }
 
+export async function signUpWithPassword(email: string, password: string) {
+  const body = parseContract(authCredentialsSchema, { email: email.trim(), password });
+  const result = await requestUnauthenticated('/v1/auth/sign-up', signUpResponseSchema, body);
+  if (result.status === 'authenticated') await persistProviderSession(result.session);
+  return result.status;
+}
+
+export async function requestPasswordReset(email: string) {
+  const body = parseContract(zod.strictObject({ email: zod.email() }), { email: email.trim() });
+  return requestUnauthenticated('/v1/auth/password-reset', passwordResetResponseSchema, body);
+}
+
+export async function resendConfirmationEmail(email: string) {
+  const body = parseContract(zod.strictObject({ email: zod.email() }), { email: email.trim() });
+  return requestUnauthenticated('/v1/auth/resend-confirmation', resendConfirmationResponseSchema, body);
+}
+
+export async function confirmEmailWithToken(tokenHash: string) {
+  const body = parseRequest(zod.strictObject({ token_hash: zod.string().min(1).max(4096) }), { token_hash: tokenHash });
+  return requestUnauthenticated('/v1/auth/confirm-email', confirmEmailResponseSchema, body);
+}
+
+export async function acceptPasswordRecoveryUrl(url: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error('This password reset link is invalid. Request a new one.');
+  }
+  const fragment = new URLSearchParams(parsed.hash.replace(/^#/, ''));
+  const get = (key: string) => fragment.get(key) ?? parsed.searchParams.get(key);
+  if (parsed.protocol !== 'trove:' || parsed.hostname !== 'reset-password' || get('type') !== 'recovery') {
+    throw new Error('This password reset link is invalid. Request a new one.');
+  }
+  const expiresIn = Number(get('expires_in'));
+  const tokenType = get('token_type');
+  const authSession = parseContract(authSessionSchema, {
+    accessToken: get('access_token'),
+    refreshToken: get('refresh_token'),
+    tokenType: tokenType?.toLowerCase() === 'bearer' ? 'Bearer' : tokenType,
+    expiresIn,
+  });
+  await persistProviderSession(authSession);
+}
+
+export async function updatePassword(password: string) {
+  const body = parseRequest(zod.strictObject({ password: zod.string().min(6).max(256) }), { password });
+  return request('/v1/auth/password', passwordUpdateResponseSchema, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+}
+
 async function refreshProviderSession(refreshToken: string) {
   try {
     const result = await requestUnauthenticated(
@@ -135,20 +193,26 @@ async function refreshProviderSession(refreshToken: string) {
   }
 }
 
+/** Refresh this far ahead of expiry so a request never starts on a token that dies in flight. */
+const ACCESS_TOKEN_REFRESH_SKEW_MS = 60_000;
+
+function accessTokenIsUsable(accessToken: string | null | undefined, expiresAt: number | null | undefined) {
+  return !!accessToken && Date.now() < (expiresAt ?? Number.POSITIVE_INFINITY) - ACCESS_TOKEN_REFRESH_SKEW_MS;
+}
+
 async function loadAccessToken(forceRefresh: boolean) {
   const saved = await loadStoredSession();
   if (!saved?.refreshToken) {
     if (saved) await clearSession();
     throw new ApiError('Sign in to continue.', 401, 'session_missing');
   }
-  const usableUntil = (saved.expiresAt ?? Number.POSITIVE_INFINITY) - 60_000;
-  if (!forceRefresh && saved.accessToken && Date.now() < usableUntil) return saved.accessToken;
+  if (!forceRefresh && accessTokenIsUsable(saved.accessToken, saved.expiresAt)) return saved.accessToken;
   return refreshProviderSession(saved.refreshToken);
 }
 
 function accessToken(forceRefresh = false): Promise<string> {
   if (sessionFlight) return sessionFlight;
-  if (!forceRefresh && session?.accessToken && Date.now() < (session.expiresAt ?? Number.POSITIVE_INFINITY) - 60_000) {
+  if (!forceRefresh && session && accessTokenIsUsable(session.accessToken, session.expiresAt)) {
     return Promise.resolve(session.accessToken);
   }
   sessionFlight = loadAccessToken(forceRefresh).finally(() => { sessionFlight = null; });

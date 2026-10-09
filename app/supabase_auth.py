@@ -18,8 +18,6 @@ def _client() -> httpx.AsyncClient:
 
 def _headers(access_token: str | None = None) -> dict[str, str]:
     config = get_config()
-    if not config.SUPABASE_URL or not config.SUPABASE_AUTH_API_KEY:
-        raise ApiError(503, "auth_not_configured", "Trove sign-in is not configured. Contact the administrator.")
     headers = {"apikey": config.SUPABASE_AUTH_API_KEY, "Content-Type": "application/json", "Accept": "application/json"}
     if access_token:
         headers["Authorization"] = f"Bearer {access_token}"
@@ -27,10 +25,7 @@ def _headers(access_token: str | None = None) -> dict[str, str]:
 
 
 def _provider_url(path: str) -> str:
-    config = get_config()
-    if not config.SUPABASE_URL:
-        raise ApiError(503, "auth_not_configured", "Trove sign-in is not configured. Contact the administrator.")
-    return f"{config.SUPABASE_URL.rstrip('/')}/auth/v1/{path}"
+    return f"{get_config().SUPABASE_URL.rstrip('/')}/auth/v1/{path}"
 
 
 async def _post(path: str, body: dict[str, str], *, access_token: str | None = None) -> httpx.Response:
@@ -43,9 +38,46 @@ async def _post(path: str, body: dict[str, str], *, access_token: str | None = N
         raise ApiError(503, "auth_unavailable", "The sign-in service is unavailable. Try again.") from error
 
 
-def _provider_error(response: httpx.Response, *, operation: str) -> ApiError:
+def _email_failure(response: httpx.Response) -> bool:
+    """Whether this provider failure is about sending an email rather than the credentials.
+
+    GoTrue reports both an exhausted e-mail send budget and a rejected SMTP message as
+    `unexpected_failure`, so a sign-up that never produced its confirmation link is indistinguishable
+    from an outage unless the provider text is read. Sign-in and refresh send no mail, so they keep
+    the credential-facing mapping.
+    """
     if response.status_code == 429:
+        return True
+    if response.status_code < 500:
+        return False
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    if not isinstance(body, dict):
+        return False
+    text = " ".join(str(body.get(key, "")) for key in ("error_code", "msg", "message")).lower()
+    return "email" in text and any(needle in text for needle in ("rate limit", "sending", "send"))
+
+
+CONFIRM_EMAIL_REDIRECT = "trove://confirm-email"
+
+
+def _provider_error(response: httpx.Response, *, operation: str) -> ApiError:
+    if response.status_code == 429 and operation not in ("sign_up", "password_reset"):
+        if operation == "resend_confirmation":
+            return ApiError(
+                429,
+                "confirmation_rate_limited",
+                "Too many confirmation emails. Wait a minute and try again.",
+            )
         return ApiError(429, "auth_rate_limited", "Too many sign-in attempts. Wait a moment and try again.")
+    if operation in ("sign_up", "password_reset", "resend_confirmation") and _email_failure(response):
+        return ApiError(
+            503,
+            "auth_email_unavailable",
+            "Trove could not send the confirmation email. Try again in a few minutes.",
+        )
     if operation == "sign_in" and response.status_code in (400, 401):
         return ApiError(401, "invalid_credentials", "Email or password is incorrect.")
     if operation == "refresh" and response.status_code in (400, 401):
@@ -92,8 +124,13 @@ async def sign_in(email: str, password: str) -> dict[str, Any]:
 
 
 async def sign_up(email: str, password: str) -> dict[str, Any]:
-    """Create an email/password account; Supabase may require email confirmation first."""
-    response = await _post("signup", {"email": email, "password": password})
+    """Create an email/password account; Supabase may require email confirmation first.
+
+    The confirmation link deep-links back to the app so tapping it opens the
+    in-app confirmation screen instead of the marketing site.
+    """
+    redirect_to = quote(CONFIRM_EMAIL_REDIRECT, safe="")
+    response = await _post(f"signup?redirect_to={redirect_to}", {"email": email, "password": password})
     if not response.is_success:
         raise _provider_error(response, operation="sign_up")
     payload = _json(response)
@@ -102,6 +139,43 @@ async def sign_up(email: str, password: str) -> dict[str, Any]:
     if payload.get("access_token") is None and payload.get("refresh_token") is None:
         return {"status": "email_confirmation_required"}
     return {"status": "authenticated", "session": _session(payload)}
+
+
+async def resend_confirmation(email: str) -> None:
+    """Resend the signup confirmation email to an existing unconfirmed account.
+
+    Raises `email_not_pending` when the address has nothing to resend (unknown,
+    already confirmed, or otherwise rejected) so the route can answer neutrally
+    instead of leaking which addresses are registered.
+    """
+    redirect_to = quote(CONFIRM_EMAIL_REDIRECT, safe="")
+    response = await _post(f"resend?redirect_to={redirect_to}", {"type": "signup", "email": email})
+    if response.is_success:
+        return
+    if response.status_code in (400, 404, 422):
+        raise ApiError(404, "email_not_pending", "If an unconfirmed account exists, a new email is on its way.")
+    raise _provider_error(response, operation="resend_confirmation")
+
+
+async def confirm_email(token_hash: str) -> None:
+    """Confirm a signup email link the app received on its deep-link route."""
+    response = await _post("verify", {"type": "signup", "token_hash": token_hash})
+    if response.is_success:
+        return
+    if response.status_code in (400, 401, 403, 422):
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
+        text = ""
+        if isinstance(body, dict):
+            text = " ".join(str(body.get(key, "")) for key in ("error_code", "msg", "message")).lower()
+        if "expir" in text:
+            raise ApiError(
+                400, "email_link_expired", "This confirmation link has expired. Request a new one."
+            )
+        raise ApiError(400, "email_link_invalid", "This confirmation link is invalid. Request a new one.")
+    raise _provider_error(response, operation="confirm_email")
 
 
 async def request_password_reset(email: str) -> None:
@@ -125,7 +199,9 @@ async def update_password(access_token: str, password: str) -> None:
         raise ApiError(503, "auth_unavailable", "The sign-in service is unavailable. Try again.") from error
     if not response.is_success:
         if response.status_code == 401:
-            raise ApiError(401, "password_reset_session_expired", "This password reset link has expired. Request a new one.")
+            raise ApiError(
+                401, "password_reset_session_expired", "This password reset link has expired. Request a new one."
+            )
         raise _provider_error(response, operation="password_update")
 
 
@@ -235,9 +311,6 @@ async def oauth_revoke_grant(access_token: str, client_id: str) -> None:
 
 async def delete_user(subject: str) -> None:
     """Delete a Supabase Auth user through the server-only admin API."""
-    config = get_config()
-    if not config.SUPABASE_SECRET_KEY:
-        raise ApiError(503, "account_deletion_unavailable", "Account deletion is not configured. Contact support.")
     try:
         auth_user_id = str(uuid.UUID(subject))
     except ValueError as error:
@@ -249,7 +322,7 @@ async def delete_user(subject: str) -> None:
             response = await client.delete(
                 _provider_url(f"admin/users/{auth_user_id}"),
                 headers={
-                    "apikey": config.SUPABASE_SECRET_KEY,
+                    "apikey": get_config().SUPABASE_SECRET_KEY,
                     "Accept": "application/json",
                 },
             )

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { cancelAccountDeletionFromTrove, clearStoredAuthSession, deleteAccountFromTrove, getAccountDeletionStatus, hasSavedSession, setSessionExpiredHandler, signInWithPassword, signOutFromTrove } from '../api/client';
+import { acceptPasswordRecoveryUrl, cancelAccountDeletionFromTrove, clearStoredAuthSession, deleteAccountFromTrove, getAccountDeletionStatus, hasSavedSession, requestPasswordReset as requestPasswordResetFromTrove, resendConfirmationEmail, setSessionExpiredHandler, signInWithPassword, signOutFromTrove, signUpWithPassword, updatePassword as updatePasswordInTrove } from '../api/client';
 import { deleteLocalCaptures } from '../features/sync/delete-local-captures';
 import { clearAccountLocalPreferences } from '../storage/local-preferences';
 
@@ -9,6 +9,11 @@ type AuthContextValue = {
   deletionAt: string | null;
   deletionCancellable: boolean;
   signIn: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<'authenticated' | 'email_confirmation_required'>;
+  requestPasswordReset: (email: string) => Promise<void>;
+  resendConfirmation: (email: string) => Promise<void>;
+  beginPasswordRecovery: (url: string) => Promise<void>;
+  completePasswordReset: (password: string) => Promise<void>;
   signOut: () => Promise<void>;
   deleteAccount: () => Promise<void>;
   cancelDeletion: () => Promise<void>;
@@ -62,6 +67,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setRestoreError(null);
   }, [checkDeletionStatus]);
 
+  const signUp = useCallback(async (email: string, password: string) => {
+    const result = await signUpWithPassword(email, password);
+    if (result === 'authenticated') {
+      await checkDeletionStatus();
+      setRestoreError(null);
+    }
+    return result;
+  }, [checkDeletionStatus]);
+
+  const requestPasswordReset = useCallback(async (email: string) => {
+    await requestPasswordResetFromTrove(email);
+  }, []);
+
+  const resendConfirmation = useCallback(async (email: string) => {
+    await resendConfirmationEmail(email);
+  }, []);
+
+  const beginPasswordRecovery = useCallback(async (url: string) => {
+    await acceptPasswordRecoveryUrl(url);
+  }, []);
+
+  const completePasswordReset = useCallback(async (password: string) => {
+    await updatePasswordInTrove(password);
+    await clearStoredAuthSession();
+    setDeletionAt(null);
+    setDeletionCancellable(false);
+    setStatus('signed_out');
+  }, []);
+
   const signOut = useCallback(async () => {
     await signOutFromTrove();
     setDeletionAt(null);
@@ -83,7 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus('signed_in');
   }, []);
 
-  const value = useMemo(() => ({ status, restoreError, deletionAt, deletionCancellable, signIn, signOut, deleteAccount, cancelDeletion, checkDeletionStatus }), [status, restoreError, deletionAt, deletionCancellable, signIn, signOut, deleteAccount, cancelDeletion, checkDeletionStatus]);
+  const value = useMemo(() => ({ status, restoreError, deletionAt, deletionCancellable, signIn, signUp, requestPasswordReset, resendConfirmation, beginPasswordRecovery, completePasswordReset, signOut, deleteAccount, cancelDeletion, checkDeletionStatus }), [status, restoreError, deletionAt, deletionCancellable, signIn, signUp, requestPasswordReset, resendConfirmation, beginPasswordRecovery, completePasswordReset, signOut, deleteAccount, cancelDeletion, checkDeletionStatus]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

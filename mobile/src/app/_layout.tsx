@@ -4,13 +4,16 @@ import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
 import { NavigationBar } from 'expo-navigation-bar';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
-import { Stack } from 'expo-router';
+import { Stack, usePathname } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { TroveProvider } from '../providers/trove-provider';
 import { ThemeProvider, useTheme } from '../providers/theme-provider';
 import { AuthProvider, useAuth } from '../providers/auth-provider';
 import { SignInScreen } from '../features/auth/sign-in-screen';
 import { AccountDeletionScreen } from '../features/auth/account-deletion-screen';
+import { ConfirmEmailScreen } from '../features/auth/confirm-email-screen';
+import { ResetPasswordScreen } from '../features/auth/reset-password-screen';
+import { VerifyEmailScreen } from '../features/auth/verify-email-screen';
 
 export default function RootLayout() {
   return (
@@ -29,6 +32,10 @@ export default function RootLayout() {
 function RootContent() {
   const { status, restoreError, deletionAt, deletionCancellable, cancelDeletion, checkDeletionStatus } = useAuth();
   const { colors } = useTheme();
+  const pathname = usePathname();
+  if (pathname === '/reset-password') return <ResetPasswordScreen />;
+  if (pathname === '/verify-email') return <VerifyEmailScreen />;
+  if (pathname === '/confirm-email') return <ConfirmEmailScreen />;
   if (status === 'restoring') {
     return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background }}><ActivityIndicator color={colors.blueDeep} /></View>;
   }

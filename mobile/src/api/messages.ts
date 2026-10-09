@@ -19,13 +19,18 @@ export function normalizeConnectionMessage(message: string): string {
 /** Server details stay diagnostic; UI copy is owned by the API adapter. */
 export function apiFailureMessage(status: number, code?: string): string {
   switch (code) {
-    case 'invalid_credentials': return 'Email or password is incorrect.';
+    case 'invalid_credentials': return 'Your account, password, or both were incorrect. Try again or create a new account.';
     case 'invalid_auth_request': return 'Enter a valid email and password.';
     case 'auth_rate_limited': return 'Too many sign-in attempts. Wait a moment and try again.';
+    case 'auth_email_unavailable': return 'Trove could not send your confirmation email. Try again in a few minutes.';
+    case 'confirmation_rate_limited': return 'Too many confirmation emails. Wait a minute and try again.';
+    case 'email_link_expired': return 'This confirmation link has expired. Request a new one below.';
+    case 'email_link_invalid': return 'This confirmation link is invalid. Request a new one below.';
     case 'auth_unavailable': return 'Sign-in is temporarily unavailable. Try again shortly.';
-    case 'auth_not_configured': return 'Trove sign-in is not configured. Contact the administrator.';
     case 'auth_request_rejected': return 'Check your email and password, then try again.';
     case 'auth_provider_error': return 'Trove could not complete sign-in. Try again shortly.';
+    case 'password_reset_session_expired': return 'This password reset link has expired. Request a new one.';
+    case 'password_update_rejected': return 'Choose a different password and try again.';
     case 'space_name_exists': return 'A Space with that name already exists. Choose another name.';
     case 'invalid_space': case 'space_not_found': return 'That Space is no longer available. Choose another Space.';
     case 'storage_quota_exceeded': return 'Your storage is full. This save is kept on your device until your plan has more space.';

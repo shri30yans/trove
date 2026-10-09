@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Annotated, Any
+from typing import Annotated, Any, TypeVar
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -22,6 +22,8 @@ from starlette.requests import Request
 from app.domain.enums import MemoryKind, ResurfacingCadence
 from app.errors import ApiError
 from app.times import parse_timestamp
+
+_RequestModel = TypeVar("_RequestModel", bound=BaseModel)
 
 _HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -179,6 +181,16 @@ class PasswordResetRequest(BaseModel):
     email: EmailStr
 
 
+class ResendConfirmationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: EmailStr
+
+
+class ConfirmEmailRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token_hash: str = Field(min_length=1, max_length=4096)
+
+
 class PasswordUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     password: str = Field(min_length=6, max_length=256)
@@ -189,7 +201,7 @@ class RefreshAuthRequest(BaseModel):
     refresh_token: str = Field(min_length=1, max_length=4096)
 
 
-async def parse_body(model: type[Any], request: Request, error_code: str, fallback: str) -> Any:
+async def parse_body(model: type[_RequestModel], request: Request, error_code: str, fallback: str) -> _RequestModel:
     """Read and validate a JSON body, raising the 400 envelope this API's clients expect."""
     try:
         payload = await request.json()
