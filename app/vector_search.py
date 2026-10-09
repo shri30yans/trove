@@ -9,7 +9,6 @@ from typing import Any
 
 from app.db import fetch
 from app.domain.retrieval import (
-    RELATED_CANDIDATE_LIMIT,
     RESURFACING_MIN_SIMILARITY,
     RESURFACING_PAGE_SIZE,
     RESURFACING_PER_MEMORY,
@@ -74,54 +73,6 @@ async def _vector_query(sql: str, args: Sequence[Any]) -> list[dict[str, Any]]:
     # HNSW settings are installed when each pooled session is initialized. One fetch keeps the
     # vector query to a single database round trip instead of wrapping SET LOCAL in a transaction.
     return await fetch(sql, *args)
-
-
-async def find_related_memories(
-    user_id: str, memory_id: str, space_id: str, limit: int = RELATED_CANDIDATE_LIMIT
-) -> list[dict[str, float | str]]:
-    rows = await _vector_query(
-        """WITH source_vectors AS (
-             SELECT e.embedding FROM embeddings e
-             WHERE e.user_id=$1 AND e.memory_id=$2 AND e.embedding_space=$3
-             UNION ALL
-             SELECT e.embedding FROM embeddings e
-             JOIN memory_assets ma ON ma.asset_id=e.asset_id AND ma.user_id=e.user_id
-             WHERE e.user_id=$1 AND ma.memory_id=$2 AND e.embedding_space=$3 AND e.modality='image'
-           ), vector_hits AS (
-             SELECT target.memory_id,target.asset_id,target.similarity
-             FROM source_vectors src
-             CROSS JOIN LATERAL (
-               SELECT e.memory_id,e.asset_id,1-(e.embedding <=> src.embedding) AS similarity
-               FROM embeddings e
-               WHERE e.user_id=$1 AND e.embedding_space=$3
-                 AND (
-                   (e.memory_id IS NOT NULL AND EXISTS (
-                     SELECT 1 FROM memories active_memory WHERE active_memory.id=e.memory_id
-                       AND active_memory.user_id=e.user_id AND active_memory.deleted_at IS NULL
-                   ))
-                   OR (e.asset_id IS NOT NULL AND EXISTS (
-                     SELECT 1 FROM memory_assets ma JOIN memories active_memory
-                       ON active_memory.id=ma.memory_id AND active_memory.user_id=ma.user_id
-                     WHERE ma.asset_id=e.asset_id AND ma.user_id=e.user_id AND active_memory.deleted_at IS NULL
-                   ))
-                 )
-               ORDER BY e.embedding <=> src.embedding
-               LIMIT $4
-             ) target
-           ), memory_hits AS (
-             SELECT vh.memory_id,vh.similarity FROM vector_hits vh WHERE vh.memory_id IS NOT NULL
-             UNION ALL
-             SELECT ma.memory_id,vh.similarity FROM vector_hits vh
-             JOIN memory_assets ma ON ma.asset_id=vh.asset_id AND ma.user_id=$1
-             WHERE vh.asset_id IS NOT NULL
-           )
-           SELECT m.id AS memory_id,max(mh.similarity)::float AS similarity
-           FROM memory_hits mh JOIN memories m ON m.id=mh.memory_id AND m.user_id=$1
-           WHERE m.id<>$2 AND m.deleted_at IS NULL
-           GROUP BY m.id ORDER BY similarity DESC LIMIT $5""",
-        [_uuid(user_id), _uuid(memory_id), space_id, limit, limit],
-    )
-    return [{"memoryId": str(row["memory_id"]), "similarity": float(row["similarity"])} for row in rows]
 
 
 async def find_resurfacing_memories(

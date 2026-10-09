@@ -32,7 +32,6 @@ from app.queries import PREVIEW_KEY_SUBQUERY
 from app.schemas import RelatedFeedbackRequest, parse_body, parse_kind_param
 from app.serialize import MemoryCard, Row, WireModel, preview_url
 from app.times import parse_timestamp
-from app.vector_search import find_related_memories
 
 router = APIRouter(dependencies=[Depends(require_auth)])
 logger = logging.getLogger("trove.api")
@@ -112,6 +111,64 @@ _SEARCH_SQL_TEMPLATE = rf"""WITH q AS (SELECT websearch_to_tsquery('simple', $2)
 def _search_statement(use_semantic_search: bool) -> str:
     semantic_cte = _SEMANTIC_SEARCH_CTE if use_semantic_search else _EMPTY_SEMANTIC_SEARCH_CTE
     return _SEARCH_SQL_TEMPLATE.replace("__SEMANTIC_SEARCH_CTE__", semantic_cte)
+
+
+_RELATED_SEARCH_SQL = f"""WITH source_vectors AS (
+     SELECT e.embedding FROM embeddings e
+     WHERE e.user_id=$1 AND e.memory_id=$2 AND e.embedding_space=$3
+     UNION ALL
+     SELECT e.embedding FROM embeddings e
+     JOIN memory_assets ma ON ma.asset_id=e.asset_id AND ma.user_id=e.user_id
+     WHERE e.user_id=$1 AND ma.memory_id=$2 AND e.embedding_space=$3 AND e.modality='image'
+   ), vector_hits AS (
+     SELECT target.memory_id,target.asset_id,target.similarity
+     FROM source_vectors src
+     CROSS JOIN LATERAL (
+       SELECT e.memory_id,e.asset_id,1-(e.embedding <=> src.embedding) AS similarity
+       FROM embeddings e
+       WHERE e.user_id=$1 AND e.embedding_space=$3
+         AND (
+           (e.memory_id IS NOT NULL AND EXISTS (
+             SELECT 1 FROM memories active_memory WHERE active_memory.id=e.memory_id
+               AND active_memory.user_id=e.user_id AND active_memory.deleted_at IS NULL
+           ))
+           OR (e.asset_id IS NOT NULL AND EXISTS (
+             SELECT 1 FROM memory_assets ma JOIN memories active_memory
+               ON active_memory.id=ma.memory_id AND active_memory.user_id=ma.user_id
+             WHERE ma.asset_id=e.asset_id AND ma.user_id=e.user_id AND active_memory.deleted_at IS NULL
+           ))
+         )
+       ORDER BY e.embedding <=> src.embedding
+       LIMIT $4
+     ) target
+   ), memory_hits AS (
+     SELECT vh.memory_id,vh.similarity FROM vector_hits vh WHERE vh.memory_id IS NOT NULL
+     UNION ALL
+     SELECT ma.memory_id,vh.similarity FROM vector_hits vh
+     JOIN memory_assets ma ON ma.asset_id=vh.asset_id AND ma.user_id=$1
+     WHERE vh.asset_id IS NOT NULL
+   ), related_candidates AS (
+     SELECT m.id AS memory_id,max(hit.similarity)::float AS similarity
+     FROM memory_hits hit JOIN memories m ON m.id=hit.memory_id AND m.user_id=$1
+     WHERE m.id<>$2 AND m.deleted_at IS NULL
+     GROUP BY m.id
+   ), candidate_page AS (
+     SELECT candidate.memory_id,candidate.similarity FROM related_candidates candidate
+     ORDER BY candidate.similarity DESC LIMIT $4
+   ), filtered_hits AS (
+     SELECT candidate.memory_id,candidate.similarity FROM candidate_page candidate
+     WHERE candidate.similarity >= $5::float
+       AND NOT EXISTS (
+         SELECT 1 FROM memory_relation_feedback f
+         WHERE f.user_id=$1 AND f.memory_id=$2
+           AND f.related_memory_id=candidate.memory_id AND f.is_related=false
+       )
+     ORDER BY candidate.similarity DESC LIMIT $6
+   )
+   SELECT m.id,m.kind,m.status,m.source_app,m.source_url,m.source_domain,m.title,m.captured_at,
+     hit.similarity,{PREVIEW_KEY_SUBQUERY}
+   FROM filtered_hits hit JOIN memories m ON m.id=hit.memory_id AND m.user_id=$1 AND m.deleted_at IS NULL
+   ORDER BY hit.similarity DESC"""
 
 
 class SearchMemory(MemoryCard):
@@ -274,19 +331,7 @@ async def related_memories(memory_id: str, principal: Principal = Depends(requir
         return respond({"memories": []})
 
     model_set = embeddings.models()
-    vector_started = time.perf_counter()
-    similar = (
-        await find_related_memories(principal.id, memory_id, model_set.space_id, RELATED_CANDIDATE_LIMIT)
-        if model_set
-        else []
-    )
-    logger.info(
-        "memory_related request_id=%s stage=vector_search elapsed_ms=%.1f candidates=%s",
-        current_request_id(),
-        (time.perf_counter() - vector_started) * 1000,
-        len(similar),
-    )
-    if not similar:
+    if not model_set:
         logger.info(
             "memory_related request_id=%s outcome=no_candidates elapsed_ms=%.1f",
             current_request_id(),
@@ -294,31 +339,22 @@ async def related_memories(memory_id: str, principal: Principal = Depends(requir
         )
         return respond({"memories": []})
 
-    hydrate_started = time.perf_counter()
+    related_started = time.perf_counter()
     rows = await fetch(
-        f"""WITH candidates AS (
-             SELECT * FROM unnest($3::uuid[],$4::float8[]) AS hit(memory_id,similarity)
-           )
-           SELECT m.id, m.kind, m.status, m.source_app, m.source_url, m.source_domain, m.title,
-             m.captured_at,c.similarity,
-             {PREVIEW_KEY_SUBQUERY}
-           FROM candidates c JOIN memories m ON m.id=c.memory_id
-           WHERE m.user_id=$1 AND m.deleted_at IS NULL AND c.similarity>=$5::float
-             AND NOT EXISTS (SELECT 1 FROM memory_relation_feedback f WHERE f.user_id=$1 AND f.memory_id=$2
-               AND f.related_memory_id=m.id AND f.is_related=false)
-           ORDER BY c.similarity DESC LIMIT $6""",
+        _RELATED_SEARCH_SQL,
         user_id,
         target,
-        [uuid.UUID(str(item["memoryId"])) for item in similar],
-        [float(item["similarity"]) for item in similar],
+        model_set.space_id,
+        RELATED_CANDIDATE_LIMIT,
         RELATED_MIN_SIMILARITY,
         RELATED_PAGE_SIZE,
     )
     memories = [RelatedMemory.from_row(row) for row in rows]
     logger.info(
-        "memory_related request_id=%s stage=hydrate elapsed_ms=%.1f",
+        "memory_related request_id=%s stage=vector_and_hydrate elapsed_ms=%.1f results=%s",
         current_request_id(),
-        (time.perf_counter() - hydrate_started) * 1000,
+        (time.perf_counter() - related_started) * 1000,
+        len(rows),
     )
     logger.info(
         "memory_related request_id=%s outcome=success elapsed_ms=%.1f",

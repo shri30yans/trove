@@ -204,12 +204,15 @@ async def test_search_result_bytes(principal: Principal, monkeypatch: pytest.Mon
 async def test_related_memory_bytes(principal: Principal, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(search, "fetchrow", AsyncMock(return_value={"memory_exists": True, "embeddings_enabled": True}))
     monkeypatch.setattr(embeddings, "models", lambda: MODEL_SET)
-    monkeypatch.setattr(
-        search, "find_related_memories", AsyncMock(return_value=[{"memoryId": str(SECOND), "similarity": 0.91}])
-    )
-    monkeypatch.setattr(search, "fetch", AsyncMock(return_value=[RELATED_ROW]))
+    fetch = AsyncMock(return_value=[RELATED_ROW])
+    monkeypatch.setattr(search, "fetch", fetch)
 
     body = (await search.related_memories(str(MEMORY), principal)).body.decode()
+
+    fetch.assert_awaited_once()
+    assert "vector_hits AS" in fetch.await_args.args[0]
+    assert "memory_relation_feedback" in fetch.await_args.args[0]
+    assert fetch.await_args.args[1:3] == (USER, MEMORY)
 
     assert body == (
         f'{{"memories":[{{"id":"{SECOND}","kind":"image","status":"ready","sourceApp":"Camera",'
