@@ -48,7 +48,9 @@ def connection(monkeypatch):
 
 
 async def move():
-    return await memory_lifecycle.move_memory(request(), str(MEMORY), Principal(id=str(USER), subject="synthetic"))
+    return await memory_lifecycle.move_memory(
+        request(), str(MEMORY), Principal(id=str(USER), subject="synthetic", embeddings_enabled=False)
+    )
 
 
 async def test_move_locks_owned_memory_and_changes_only_selected_memberships(connection):

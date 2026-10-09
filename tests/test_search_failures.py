@@ -34,11 +34,10 @@ async def test_search_service_accepts_plain_query_values(monkeypatch):
     from app.auth import Principal
 
     fetch = AsyncMock(return_value=[])
-    monkeypatch.setattr(search, "_embeddings_enabled_for_user", AsyncMock(return_value=False))
     monkeypatch.setattr(search, "fetch", fetch)
 
     result = await search.search_memories_for_user(
-        Principal(id="00000000-0000-4000-8000-000000000001", subject="synthetic"),
+        Principal(id="00000000-0000-4000-8000-000000000001", subject="synthetic", embeddings_enabled=False),
         {"q": "  project ideas  ", "limit": "3", "spaceId": "00000000-0000-4000-8000-000000000002"},
     )
 
@@ -59,13 +58,13 @@ async def test_hybrid_search_ranks_vector_and_text_hits_in_one_database_call(mon
         model_revision="synthetic-revision",
         vector=[0.25] * 768,
     )
-    monkeypatch.setattr(search, "_embeddings_enabled_for_user", AsyncMock(return_value=True))
     monkeypatch.setattr(search.embeddings, "embed_text", AsyncMock(return_value=embedding))
     fetch = AsyncMock(return_value=[])
     monkeypatch.setattr(search, "fetch", fetch)
 
     result = await search.search_memories_for_user(
-        Principal(id="00000000-0000-4000-8000-000000000001", subject="synthetic"), {"q": "project ideas"}
+        Principal(id="00000000-0000-4000-8000-000000000001", subject="synthetic", embeddings_enabled=True),
+        {"q": "project ideas"},
     )
 
     assert result.semanticSearch is True
@@ -84,18 +83,18 @@ async def test_hybrid_search_ranks_vector_and_text_hits_in_one_database_call(mon
 async def test_raw_search_skips_embeddings_and_scopes_tag_filter(monkeypatch):
     from app.auth import Principal
 
-    enabled = AsyncMock(side_effect=AssertionError("raw search must not inspect embedding availability"))
+    embed = AsyncMock(side_effect=AssertionError("raw search must not call the embedding service"))
     fetch = AsyncMock(return_value=[])
-    monkeypatch.setattr(search, "_embeddings_enabled_for_user", enabled)
+    monkeypatch.setattr(search.embeddings, "embed_text", embed)
     monkeypatch.setattr(search, "fetch", fetch)
 
     result = await search.search_memories_for_user(
-        Principal(id="00000000-0000-4000-8000-000000000001", subject="synthetic"),
+        Principal(id="00000000-0000-4000-8000-000000000001", subject="synthetic", embeddings_enabled=False),
         {"q": "  project ideas  ", "mode": "raw", "tag": "  Reading ", "limit": "3"},
     )
 
     assert result.semanticSearch is False
-    enabled.assert_not_awaited()
+    embed.assert_not_awaited()
     assert fetch.await_args.args[-2:] == ("reading", 3)
     assert "mt.tag=$8" in fetch.await_args.args[0]
     assert "LIMIT $9" in fetch.await_args.args[0]
@@ -105,19 +104,19 @@ async def test_raw_search_skips_embeddings_and_scopes_tag_filter(monkeypatch):
 async def test_tag_only_search_lists_all_memories_with_tag_without_embedding(monkeypatch):
     from app.auth import Principal
 
-    enabled = AsyncMock(side_effect=AssertionError("tag browsing must not request embeddings"))
+    embed = AsyncMock(side_effect=AssertionError("tag browsing must not call the embedding service"))
     fetch = AsyncMock(return_value=[])
-    monkeypatch.setattr(search, "_embeddings_enabled_for_user", enabled)
+    monkeypatch.setattr(search.embeddings, "embed_text", embed)
     monkeypatch.setattr(search, "fetch", fetch)
 
     result = await search.search_memories_for_user(
-        Principal(id="00000000-0000-4000-8000-000000000001", subject="synthetic"),
+        Principal(id="00000000-0000-4000-8000-000000000001", subject="synthetic", embeddings_enabled=False),
         {"tag": " Reading "},
     )
 
     assert result.query == ""
     assert result.semanticSearch is False
-    enabled.assert_not_awaited()
+    embed.assert_not_awaited()
     assert fetch.await_args.args[2] == ""
     assert fetch.await_args.args[-2:] == ("reading", 20)
 
@@ -128,7 +127,7 @@ async def test_search_requires_text_or_tag():
 
     with pytest.raises(ApiError) as error:
         await search.search_memories_for_user(
-            Principal(id="00000000-0000-4000-8000-000000000001", subject="synthetic"),
+            Principal(id="00000000-0000-4000-8000-000000000001", subject="synthetic", embeddings_enabled=False),
             {},
         )
 

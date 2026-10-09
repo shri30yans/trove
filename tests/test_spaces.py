@@ -23,7 +23,9 @@ CREATED_AT = dt.datetime(2026, 3, 4, 5, 6, 7, 8000, tzinfo=dt.UTC)
 
 WRITE_KEYS = {"id", "name", "description", "color", "icon", "createdAt", "updatedAt"}
 
-PRINCIPAL = Principal(id=str(USER_ID), subject="google-1", email="t@example.com", displayName="T")
+PRINCIPAL = Principal(
+    id=str(USER_ID), subject="google-1", email="t@example.com", displayName="T", embeddings_enabled=False
+)
 
 
 def row(**overrides: Any) -> dict[str, Any]:

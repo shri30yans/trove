@@ -136,7 +136,7 @@ MODEL_SET = type("ModelSet", (), {"space_id": "synthetic-space"})()
 
 @pytest.fixture
 def principal() -> Principal:
-    return Principal(id=str(USER), subject="synthetic")
+    return Principal(id=str(USER), subject="synthetic", embeddings_enabled=False)
 
 
 async def test_memory_detail_bytes(principal: Principal, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -188,7 +188,6 @@ async def test_a_full_page_names_the_row_to_resume_from(principal: Principal, mo
 
 
 async def test_search_result_bytes(principal: Principal, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(search, "_embeddings_enabled_for_user", AsyncMock(return_value=False))
     monkeypatch.setattr(search, "fetch", AsyncMock(return_value=[SEARCH_ROW]))
 
     results = await search.search_memories_for_user(principal, {"q": "page"})

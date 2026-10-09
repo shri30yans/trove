@@ -14,7 +14,7 @@ from app.auth import Principal
 
 SUBJECT = str(uuid.UUID(int=123))
 USER_ID = str(uuid.UUID(int=456))
-PRINCIPAL = Principal(id=USER_ID, subject=SUBJECT)
+PRINCIPAL = Principal(id=USER_ID, subject=SUBJECT, embeddings_enabled=False)
 
 
 @pytest.mark.asyncio

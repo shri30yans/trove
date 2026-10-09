@@ -36,7 +36,7 @@ def test_storage_usage_is_reported_without_a_negative_remainder():
 async def test_plan_endpoint_returns_owned_storage_usage(monkeypatch):
     lookup = AsyncMock(return_value={"storage_plan": "paid", "storage_used_bytes": 10_000_000})
     monkeypatch.setattr(accounts, "fetchrow", lookup)
-    response = await accounts.get_plan(Principal(id=USER_ID, subject="test"))
+    response = await accounts.get_plan(Principal(id=USER_ID, subject="test", embeddings_enabled=False))
     assert lookup.call_args.args[1] == uuid.UUID(USER_ID)
     assert b'"id":"paid"' in response.body
     assert b'"storageUsedBytes":10000000' in response.body
@@ -81,7 +81,7 @@ async def call_create_upload(monkeypatch, connection: FakeConnection, byte_size:
     monkeypatch.setattr(uploads, "get_config", lambda: SimpleNamespace(MAX_UPLOAD_BYTES=52_428_800))
     return await uploads.create_upload(
         upload_request({"filename": "synthetic.bin", "mimeType": "application/octet-stream", "byteSize": byte_size}),
-        Principal(id=USER_ID, subject="test"),
+        Principal(id=USER_ID, subject="test", embeddings_enabled=False),
     )
 
 

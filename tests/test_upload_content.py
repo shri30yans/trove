@@ -48,7 +48,9 @@ def upload(monkeypatch):
 
 
 async def send(body):
-    return await uploads.upload_content(ASSET_ID, request_with_body(body), Principal(id=USER_ID, subject="test"))
+    return await uploads.upload_content(
+        ASSET_ID, request_with_body(body), Principal(id=USER_ID, subject="test", embeddings_enabled=False)
+    )
 
 
 async def test_upload_streams_exact_content_and_scopes_lookup_to_owner(upload):
@@ -123,7 +125,7 @@ async def test_completion_returns_verified_size_on_first_call_and_retry(upload, 
     update = AsyncMock()
     monkeypatch.setattr(uploads.storage, "head_object_size", head)
     monkeypatch.setattr(uploads, "execute", update)
-    response = await uploads.complete_upload(ASSET_ID, Principal(id=USER_ID, subject="test"))
+    response = await uploads.complete_upload(ASSET_ID, Principal(id=USER_ID, subject="test", embeddings_enabled=False))
     assert json.loads(response.body)["byteSize"] == 5
     assert head.await_count == (1 if status == "pending_upload" else 0)
     assert update.await_count == (1 if status == "pending_upload" else 0)
@@ -135,7 +137,7 @@ async def test_completion_rejects_invalid_persisted_size(upload, monkeypatch, si
     head = AsyncMock()
     monkeypatch.setattr(uploads.storage, "head_object_size", head)
     with pytest.raises(ApiError) as error:
-        await uploads.complete_upload(ASSET_ID, Principal(id=USER_ID, subject="test"))
+        await uploads.complete_upload(ASSET_ID, Principal(id=USER_ID, subject="test", embeddings_enabled=False))
     assert error.value.code == "invalid_upload_record"
     head.assert_not_awaited()
 
@@ -145,7 +147,7 @@ async def test_completion_mismatch_never_confirms_upload(upload, monkeypatch):
     monkeypatch.setattr(uploads, "execute", update)
     monkeypatch.setattr(uploads.storage, "head_object_size", AsyncMock(return_value=4))
     with pytest.raises(ApiError) as error:
-        await uploads.complete_upload(ASSET_ID, Principal(id=USER_ID, subject="test"))
+        await uploads.complete_upload(ASSET_ID, Principal(id=USER_ID, subject="test", embeddings_enabled=False))
     assert error.value.code == "upload_size_mismatch"
     update.assert_not_awaited()
 
@@ -157,7 +159,7 @@ async def test_storage_connection_failure_is_consistent_across_upload_stages(upl
     operation_call = (
         send(b"hello")
         if stage == "transfer"
-        else uploads.complete_upload(ASSET_ID, Principal(id=USER_ID, subject="test"))
+        else uploads.complete_upload(ASSET_ID, Principal(id=USER_ID, subject="test", embeddings_enabled=False))
     )
     with pytest.raises(ApiError) as error:
         await operation_call

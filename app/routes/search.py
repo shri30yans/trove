@@ -166,14 +166,6 @@ class RelatedMemory(MemoryCard):
         )
 
 
-async def _embeddings_enabled_for_user(user_id: uuid.UUID) -> bool:
-    row = await fetchrow(
-        "SELECT COALESCE((SELECT embeddings_enabled FROM user_preferences WHERE user_id=$1),false) AS embeddings_enabled",
-        user_id,
-    )
-    return bool(row and row["embeddings_enabled"])
-
-
 async def _embed_search_query(text: str, enabled: bool, purpose: str = "query") -> Embedding | None:
     if not enabled:
         return None
@@ -212,7 +204,7 @@ async def search_memories_for_user(principal: Principal, query: Mapping[str, str
     embedding: Embedding | None = None
     if term and mode == "hybrid":
         embedding_started = time.perf_counter()
-        embedding = await _embed_search_query(term, await _embeddings_enabled_for_user(user_id))
+        embedding = await _embed_search_query(term, principal.embeddings_enabled)
         logger.info(
             "memory_search request_id=%s stage=embedding elapsed_ms=%.1f enabled=%s",
             current_request_id(),

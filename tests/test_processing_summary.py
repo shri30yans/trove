@@ -20,7 +20,7 @@ async def test_processing_summary_counts_every_live_save(monkeypatch: pytest.Mon
         ]
     )
     monkeypatch.setattr(accounts, "fetch", lookup)
-    response = await accounts.processing_summary(Principal(id=USER_ID, subject="test"))
+    response = await accounts.processing_summary(Principal(id=USER_ID, subject="test", embeddings_enabled=False))
 
     assert lookup.call_args.args[1] == uuid.UUID(USER_ID)
     sql = lookup.call_args.args[0]
@@ -37,7 +37,7 @@ async def test_processing_summary_counts_every_live_save(monkeypatch: pytest.Mon
 
 async def test_an_empty_library_still_reports_zeroes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(accounts, "fetch", AsyncMock(return_value=[]))
-    response = await accounts.processing_summary(Principal(id=USER_ID, subject="test"))
+    response = await accounts.processing_summary(Principal(id=USER_ID, subject="test", embeddings_enabled=False))
     assert json.loads(response.body)["processing"] == {
         "queued": 0,
         "processing": 0,

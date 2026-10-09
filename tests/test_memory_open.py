@@ -118,7 +118,9 @@ async def test_mcp_memory_detail_reads_without_recording_an_open(monkeypatch):
     )
     monkeypatch.setattr(memory_reads, "fetchrow", fetchrow)
 
-    result = await memory_reads.get_memory_detail(str(MEMORY), Principal(id=str(USER), subject="synthetic"))
+    result = await memory_reads.get_memory_detail(
+        str(MEMORY), Principal(id=str(USER), subject="synthetic", embeddings_enabled=False)
+    )
 
     assert result.id == str(MEMORY)
     query, _, _, record_opened = fetchrow.call_args.args
@@ -134,7 +136,7 @@ async def test_memory_list_service_accepts_plain_query_values(monkeypatch):
     monkeypatch.setattr(memory_reads, "fetch", fetch)
 
     result = await memory_reads.list_memories_for_user(
-        Principal(id=str(USER), subject="synthetic"),
+        Principal(id=str(USER), subject="synthetic", embeddings_enabled=False),
         {"limit": "4", "spaceId": str(MEMORY), "kind": "text"},
     )
 
@@ -152,7 +154,7 @@ async def test_related_memory_eligibility_checks_ownership_and_ai_in_one_round_t
     fetchrow = AsyncMock(return_value={"memory_exists": True, "embeddings_enabled": False})
     monkeypatch.setattr(search, "fetchrow", fetchrow)
 
-    await search.related_memories(str(MEMORY), Principal(id=str(USER), subject="synthetic"))
+    await search.related_memories(str(MEMORY), Principal(id=str(USER), subject="synthetic", embeddings_enabled=False))
 
     assert fetchrow.await_count == 1
     query, target, user_id = fetchrow.call_args.args

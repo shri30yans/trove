@@ -16,7 +16,9 @@ async def test_memory_tag_suggestions_are_scoped_to_owner_and_search_prefix(monk
     monkeypatch.setattr(memories, "fetch", fetch)
     request = Request({"type": "http", "query_string": b"q=Read"})
 
-    result = await memories.list_memory_tags(request, Principal(id=str(USER), subject="synthetic"))
+    result = await memories.list_memory_tags(
+        request, Principal(id=str(USER), subject="synthetic", embeddings_enabled=False)
+    )
 
     assert result.body == b'{"tags":[{"tag":"reading","memoryCount":3}]}'
     assert fetch.await_args.args[1:] == (USER, "read")
@@ -30,7 +32,7 @@ async def test_memory_tag_suggestion_query_limit_is_validated(monkeypatch):
     request = Request({"type": "http", "query_string": b"q=" + b"a" * 41})
 
     with pytest.raises(ApiError) as error:
-        await memories.list_memory_tags(request, Principal(id=str(USER), subject="synthetic"))
+        await memories.list_memory_tags(request, Principal(id=str(USER), subject="synthetic", embeddings_enabled=False))
 
     assert error.value.code == "invalid_tag"
     fetch.assert_not_awaited()

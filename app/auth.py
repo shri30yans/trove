@@ -30,6 +30,7 @@ class Principal(BaseModel):
     subject: str
     email: str | None = None
     displayName: str | None = None
+    embeddings_enabled: bool
 
 
 @lru_cache(maxsize=1)
@@ -66,41 +67,41 @@ def _as_str(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _profile_changed(row: dict[str, Any] | None, email: str | None, display_name: str | None) -> bool:
-    """Whether the row on file still says what this token says.
-
-    The alternative is an INSERT..ON CONFLICT on every authenticated request, which takes a lock on
-    the user's row and rewrites updated_at just because they opened their archive.
-    """
-    if row is None:
-        return True
-    claims = ((email, "email"), (display_name, "display_name"))
-    return any(claim is not None and claim != row[column] for claim, column in claims)
-
-
 async def _load_principal(subject: str, email: str | None, display_name: str | None) -> Principal:
-    row = await fetchrow("SELECT id, email, display_name FROM app_users WHERE auth_subject=$1", subject)
-    if _profile_changed(row, email, display_name):
-        # First sight of this subject, or the provider says the profile moved.
-        row = await fetchrow(
-            """INSERT INTO app_users (auth_subject, email, display_name)
-               VALUES ($1, $2, $3)
-               ON CONFLICT (auth_subject) DO UPDATE SET
-                 email = COALESCE(EXCLUDED.email, app_users.email),
-                 display_name = COALESCE(EXCLUDED.display_name, app_users.display_name),
-                 updated_at = now()
-               RETURNING id, email, display_name""",
-            subject,
-            email,
-            display_name,
-        )
-    if row is None:  # pragma: no cover - the upsert always returns a row
+    """Resolve an already-verified integration subject, creating its app profile if needed."""
+    row = await fetchrow(
+        """WITH existing AS MATERIALIZED (
+             SELECT id,email,display_name FROM app_users WHERE auth_subject=$1
+           ), profile AS (
+             INSERT INTO app_users(auth_subject,email,display_name)
+             SELECT $1,$2,$3
+             WHERE NOT EXISTS (SELECT 1 FROM existing)
+                OR ($2::text IS NOT NULL AND EXISTS (SELECT 1 FROM existing WHERE email IS DISTINCT FROM $2))
+                OR ($3::text IS NOT NULL AND EXISTS (SELECT 1 FROM existing WHERE display_name IS DISTINCT FROM $3))
+             ON CONFLICT (auth_subject) DO UPDATE SET
+               email=COALESCE(EXCLUDED.email,app_users.email),
+               display_name=COALESCE(EXCLUDED.display_name,app_users.display_name),
+               updated_at=now()
+             RETURNING id,email,display_name
+           )
+           SELECT COALESCE(profile.id,existing.id) AS id,
+                  COALESCE(profile.email,existing.email) AS email,
+                  COALESCE(profile.display_name,existing.display_name) AS display_name,
+                  COALESCE((SELECT preferences.embeddings_enabled FROM user_preferences preferences
+                            WHERE preferences.user_id=COALESCE(profile.id,existing.id)),false) AS embeddings_enabled
+           FROM (SELECT 1) AS anchor LEFT JOIN existing ON TRUE LEFT JOIN profile ON TRUE""",
+        subject,
+        email,
+        display_name,
+    )
+    if row is None or row["id"] is None:
         raise _INVALID_TOKEN
     return Principal(
         id=str(row["id"]),
         subject=subject,
         email=row["email"],
         displayName=row["display_name"],
+        embeddings_enabled=bool(row["embeddings_enabled"]),
     )
 
 
@@ -150,7 +151,9 @@ async def _principal_from_request(request: Request, *, allow_deleted: bool = Fal
            SELECT s.deleted, s.deletion_pending,
                   COALESCE(p.id, e.id) AS id,
                   COALESCE(p.email, e.email) AS email,
-                  COALESCE(p.display_name, e.display_name) AS display_name
+                  COALESCE(p.display_name, e.display_name) AS display_name,
+                  COALESCE((SELECT preferences.embeddings_enabled FROM user_preferences preferences
+                            WHERE preferences.user_id=COALESCE(p.id,e.id)),false) AS embeddings_enabled
            FROM status s LEFT JOIN existing e ON TRUE LEFT JOIN profile p ON TRUE""",
         subject,
         _as_str(payload.get("email")),
@@ -166,6 +169,7 @@ async def _principal_from_request(request: Request, *, allow_deleted: bool = Fal
                 subject=subject,
                 email=_as_str(payload.get("email")),
                 displayName=_as_str(payload.get("name")),
+                embeddings_enabled=bool(account["embeddings_enabled"]),
             )
         raise ApiError(401, "account_deleted", "This account has been deleted.")
     if account["deletion_pending"]:
@@ -173,7 +177,11 @@ async def _principal_from_request(request: Request, *, allow_deleted: bool = Fal
     if account["id"] is None:  # pragma: no cover - the guarded upsert provides the first row
         raise _INVALID_TOKEN
     return Principal(
-        id=str(account["id"]), subject=subject, email=account["email"], displayName=account["display_name"]
+        id=str(account["id"]),
+        subject=subject,
+        email=account["email"],
+        displayName=account["display_name"],
+        embeddings_enabled=bool(account["embeddings_enabled"]),
     )
 
 

@@ -107,24 +107,42 @@ class _Request:
 
 
 class _Rows:
-    """Answers the statements auth issues from a stored profile, and records what it asked for."""
+    """Answers the account lookup and records its arguments without a database."""
 
-    def __init__(self, *, exists: bool = True, email: str | None = None, display_name: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        exists: bool = True,
+        email: str | None = None,
+        display_name: str | None = None,
+        embeddings_enabled: bool = False,
+    ) -> None:
         self.statements: list[tuple[str, tuple[Any, ...]]] = []
         self.exists = exists
+        self.embeddings_enabled = embeddings_enabled
         self.profile: dict[str, Any] = {"email": email, "display_name": display_name}
 
     async def __call__(self, sql: str, *args: Any) -> dict[str, Any] | None:
         self.statements.append((" ".join(sql.split()), args))
         statement = sql.lstrip().upper()
         if statement.startswith("WITH"):
-            if not self.exists or auth._profile_changed(self.profile, args[1], args[2]):
+            if (
+                not self.exists
+                or (args[1] is not None and args[1] != self.profile["email"])
+                or (args[2] is not None and args[2] != self.profile["display_name"])
+            ):
                 self.exists = True
                 self.profile = {
                     "email": args[1] or self.profile["email"],
                     "display_name": args[2] or self.profile["display_name"],
                 }
-            return {"deleted": False, "deletion_pending": False, "id": str(uuid.UUID(int=7)), **self.profile}
+            return {
+                "deleted": False,
+                "deletion_pending": False,
+                "id": str(uuid.UUID(int=7)),
+                "embeddings_enabled": self.embeddings_enabled,
+                **self.profile,
+            }
         if statement.startswith("SELECT"):
             if not self.exists:
                 return None
@@ -246,6 +264,19 @@ async def test_require_auth_carries_a_verified_token_into_a_principal(jwks, monk
     assert principal.subject == "auth0|user-1"
     assert principal.email == "reader@trove.example.test"
     assert principal.displayName == "Reader"
+    assert principal.embeddings_enabled is False
+
+
+async def test_auth_loads_embedding_preference_with_the_account_lookup(jwks, monkeypatch) -> None:
+    jwks(key=_RSA_JWK)
+    rows = _Rows(embeddings_enabled=True)
+    monkeypatch.setattr(auth, "fetchrow", rows)
+
+    principal = await auth.require_auth(_Request({"authorization": f"Bearer {_rs256_token()}"}))
+
+    assert principal.embeddings_enabled is True
+    assert len(rows.statements) == 1
+    assert "FROM user_preferences preferences" in rows.statements[0][0]
 
 
 async def test_a_first_request_for_a_subject_creates_it_once(jwks, monkeypatch) -> None:
@@ -296,7 +327,14 @@ async def test_deleted_subject_is_blocked_from_normal_routes_but_can_retry_delet
     async def account_state(_sql: str, *_args: Any) -> dict[str, Any]:
         allow_deleted = bool(_args[3])
         calls.append(allow_deleted)
-        return {"deleted": True, "deletion_pending": False, "id": None, "email": None, "display_name": None}
+        return {
+            "deleted": True,
+            "deletion_pending": False,
+            "id": None,
+            "email": None,
+            "display_name": None,
+            "embeddings_enabled": False,
+        }
 
     monkeypatch.setattr(auth, "fetchrow", account_state)
     request = _Request({"authorization": f"Bearer {_rs256_token()}"})
@@ -321,6 +359,7 @@ async def test_pending_deletion_blocks_normal_feature_routes(jwks, monkeypatch) 
             "id": str(uuid.UUID(int=7)),
             "email": None,
             "display_name": None,
+            "embeddings_enabled": False,
         }
 
     monkeypatch.setattr(auth, "fetchrow", account_state)
@@ -329,16 +368,6 @@ async def test_pending_deletion_blocks_normal_feature_routes(jwks, monkeypatch) 
 
     assert raised.value.status_code == 403
     assert raised.value.code == "account_deletion_pending"
-
-
-def test_the_profile_only_moves_when_the_token_says_something_different() -> None:
-    stored = {"email": "a@example.test", "display_name": "A"}
-    assert auth._profile_changed(None, "a@example.test", "A")
-    assert auth._profile_changed(stored, "b@example.test", "A")
-    assert auth._profile_changed(stored, "a@example.test", "B")
-    assert not auth._profile_changed(stored, "a@example.test", "A")
-    # A claim the provider left out is not a change, and not a request to erase the stored value.
-    assert not auth._profile_changed(stored, None, None)
 
 
 async def test_require_auth_asks_for_a_bearer_token(install_config) -> None:
