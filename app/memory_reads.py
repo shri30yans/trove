@@ -18,7 +18,7 @@ import re
 import uuid
 from collections.abc import Mapping
 
-from app.auth import Principal, VerifiedSubject, as_uuid
+from app.auth import AUTH_SUBJECT_CTE, Principal, VerifiedSubject, as_uuid, resolve_auth_state
 from app.db import fetch, fetchrow
 from app.domain.retrieval import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT, LIST_MIN_LIMIT, parse_limit
 from app.errors import ApiError, iso_milliseconds
@@ -126,31 +126,10 @@ async def get_memory_detail(
 
 # The memory-open path resolves the verified subject to an account inside the same statement that
 # reads the memory: one database round trip instead of one for authentication plus one for the
-# read. The auth preamble below mirrors `_principal_from_request` with `allow_deleted=False`:
-# tombstoned subjects stay 401, deletion-pending subjects stay 403, and the profile upsert only
-# runs when neither flag is set. The outer `auth LEFT JOIN target` always yields exactly one row so
-# the auth outcome is observable even when the memory is missing or belongs to someone else.
-_MEMORY_OPEN_WITH_AUTH_SQL = """WITH status AS (
-     SELECT EXISTS(SELECT 1 FROM deleted_auth_subjects WHERE auth_subject=$1) AS deleted,
-            EXISTS(SELECT 1 FROM account_deletion_requests WHERE auth_subject=$1) AS deletion_pending
-   ), existing AS MATERIALIZED (
-     SELECT id, email, display_name FROM app_users WHERE auth_subject=$1
-   ), profile AS (
-     INSERT INTO app_users (auth_subject, email, display_name)
-     SELECT $1, $2, $3 FROM status s LEFT JOIN existing e ON TRUE
-     WHERE NOT s.deleted AND NOT s.deletion_pending
-       AND (e.id IS NULL
-         OR ($2::text IS NOT NULL AND e.email IS DISTINCT FROM $2::text)
-         OR ($3::text IS NOT NULL AND e.display_name IS DISTINCT FROM $3::text))
-     ON CONFLICT (auth_subject) DO UPDATE SET
-       email = COALESCE(EXCLUDED.email, app_users.email),
-       display_name = COALESCE(EXCLUDED.display_name, app_users.display_name),
-       updated_at = now()
-     RETURNING id, email, display_name
-   ), auth AS (
-     SELECT s.deleted, s.deletion_pending, COALESCE(p.id, e.id) AS user_id
-     FROM status s LEFT JOIN existing e ON TRUE LEFT JOIN profile p ON TRUE
-   ), target AS MATERIALIZED (
+# read. It builds on AUTH_SUBJECT_CTE, so the deletion and profile-sync checks are the shared
+# ones, not a copy. The outer `auth LEFT JOIN target` always yields exactly one row so the auth
+# outcome is observable even when the memory is missing or belongs to someone else.
+_MEMORY_OPEN_WITH_AUTH_SQL = f"""WITH {AUTH_SUBJECT_CTE}, target AS MATERIALIZED (
      SELECT m.id, m.kind, m.status, m.processing_error, m.source_app, m.source_url, m.source_domain,
        m.title, m.description, m.user_note, m.content_text, m.page_text,
        m.capture_metadata, m.captured_at, m.occurred_at, m.created_at, m.updated_at,
@@ -174,6 +153,7 @@ _MEMORY_OPEN_WITH_AUTH_SQL = """WITH status AS (
    )
    SELECT (SELECT deleted FROM auth) AS deleted,
      (SELECT deletion_pending FROM auth) AS deletion_pending,
+     (SELECT user_id FROM auth) AS user_id,
      t.*,
      COALESCE((SELECT json_agg(json_build_object('id',a.id,'filename',a.original_filename,
        'mimeType',a.mime_type,'byteSize',a.byte_size,'status',a.status,'createdAt',a.created_at,'role',ma.role)
@@ -206,10 +186,7 @@ async def read_memory_for_subject(
     )
     if row is None:  # pragma: no cover - the auth anchor always yields exactly one row
         raise ApiError(500, "internal_error", "The request could not be completed.")
-    if row["deleted"]:
-        raise ApiError(401, "account_deleted", "This account has been deleted.")
-    if row["deletion_pending"]:
-        raise ApiError(403, "account_deletion_pending", "Account deletion is pending. Cancel it to keep using Trove.")
+    resolve_auth_state(row)
     if row["id"] is None:
         return None
     return MemoryDetail.from_row(row)

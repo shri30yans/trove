@@ -9,7 +9,7 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
 from app import supabase_auth
-from app.auth import Principal, _load_principal, verify_bearer_token
+from app.auth import Principal, VerifiedSubject, _load_principal, verify_bearer_token
 from app.config import get_config
 from app.db import fetchrow
 from app.errors import ApiError
@@ -62,6 +62,18 @@ class SupabaseTokenVerifier(TokenVerifier):
             expires_at=expires_at,
             resource=resource,
         )
+
+
+async def current_subject() -> VerifiedSubject:
+    """Resolve the verified MCP token's subject without a database round trip.
+
+    The tool's own query resolves the account and enforces deletion state in the same round
+    trip, so MCP reads save the lookup `current_principal` used to perform.
+    """
+    token = get_access_token()
+    if token is None or not token.subject:
+        raise ValueError("A valid Trove account link is required.")
+    return VerifiedSubject(subject=token.subject)
 
 
 async def current_principal() -> Principal:

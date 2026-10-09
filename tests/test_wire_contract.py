@@ -141,7 +141,9 @@ def principal() -> Principal:
 
 async def test_memory_detail_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        memory_reads, "fetchrow", AsyncMock(return_value={**DETAIL_ROW, "deleted": False, "deletion_pending": False})
+        memory_reads,
+        "fetchrow",
+        AsyncMock(return_value={**DETAIL_ROW, "deleted": False, "deletion_pending": False, "user_id": USER}),
     )
 
     body = (await memories.get_memory(str(MEMORY), VerifiedSubject(subject="synthetic"))).body.decode()
@@ -223,24 +225,35 @@ async def test_related_memory_bytes(principal: Principal, monkeypatch: pytest.Mo
     )
 
 
-async def test_space_list_bytes(principal: Principal, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(spaces, "fetch", AsyncMock(return_value=[SPACE_ROW]))
+async def test_space_list_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        spaces,
+        "fetch",
+        AsyncMock(return_value=[{**SPACE_ROW, "deleted": False, "deletion_pending": False, "user_id": USER}]),
+    )
 
-    assert dump_json(await spaces.list_spaces_for_user(principal)) == (
+    assert dump_json(await spaces.list_spaces_for_user(VerifiedSubject(subject="synthetic"))) == (
         f'{{"spaces":[{{"id":"{SPACE}","name":"Reading","description":"Things to read",'
         f'"color":"#101010","icon":"book","createdAt":"{WIRE_STAMP}","updatedAt":"{WIRE_STAMP}",'
         '"memoryCount":3}]}'
     )
 
 
-async def test_a_space_write_reports_no_count(principal: Principal, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_space_write_reports_no_count(monkeypatch: pytest.MonkeyPatch) -> None:
     """The list query's join is the only source of a count, so a written Space cannot carry one."""
-    row: dict[str, Any] = {key: value for key, value in SPACE_ROW.items() if key != "memory_count"}
+    row: dict[str, Any] = {
+        **{key: value for key, value in SPACE_ROW.items() if key != "memory_count"},
+        "deleted": False,
+        "deletion_pending": False,
+        "user_id": USER,
+    }
     monkeypatch.setattr(spaces, "fetchrow", AsyncMock(return_value=row))
 
     from app.schemas import UpdateSpaceRequest
 
-    space = await spaces.update_space_for_user(str(SPACE), principal, UpdateSpaceRequest(name="Renamed"))
+    space = await spaces.update_space_for_user(
+        str(SPACE), VerifiedSubject(subject="synthetic"), UpdateSpaceRequest(name="Renamed")
+    )
 
     assert dump_json({"space": space}) == (
         f'{{"space":{{"id":"{SPACE}","name":"Reading","description":"Things to read",'

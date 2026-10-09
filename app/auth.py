@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any
 
@@ -154,6 +155,51 @@ async def require_subject(request: Request) -> VerifiedSubject:
     """
     subject, email, display_name = await _verified_identity(request)
     return VerifiedSubject(subject=subject, email=email, display_name=display_name)
+
+
+# The account-resolution preamble shared by every combined auth-plus-query statement. It mirrors
+# `_principal_from_request` with `allow_deleted=False`: tombstoned subjects stay 401,
+# deletion-pending subjects stay 403, and the profile upsert only runs when neither flag is set.
+# Every statement that splices it in takes the subject, email, and display name as $1, $2, $3, so
+# the domain parameters always start at $4. It is an ALL_CAPS constant because route SQL splices
+# it into f-strings, where only such constants may appear.
+AUTH_SUBJECT_CTE = """status AS (
+     SELECT EXISTS(SELECT 1 FROM deleted_auth_subjects WHERE auth_subject=$1) AS deleted,
+            EXISTS(SELECT 1 FROM account_deletion_requests WHERE auth_subject=$1) AS deletion_pending
+   ), existing AS MATERIALIZED (
+     SELECT id, email, display_name FROM app_users WHERE auth_subject=$1
+   ), profile AS (
+     INSERT INTO app_users (auth_subject, email, display_name)
+     SELECT $1, $2, $3 FROM status s LEFT JOIN existing e ON TRUE
+     WHERE NOT s.deleted AND NOT s.deletion_pending
+       AND (e.id IS NULL
+         OR ($2::text IS NOT NULL AND e.email IS DISTINCT FROM $2::text)
+         OR ($3::text IS NOT NULL AND e.display_name IS DISTINCT FROM $3::text))
+     ON CONFLICT (auth_subject) DO UPDATE SET
+       email = COALESCE(EXCLUDED.email, app_users.email),
+       display_name = COALESCE(EXCLUDED.display_name, app_users.display_name),
+       updated_at = now()
+     RETURNING id, email, display_name
+   ), auth AS (
+     SELECT s.deleted, s.deletion_pending, COALESCE(p.id, e.id) AS user_id
+     FROM status s LEFT JOIN existing e ON TRUE LEFT JOIN profile p ON TRUE
+   )"""
+
+
+def resolve_auth_state(row: Mapping[str, Any]) -> uuid.UUID:
+    """Enforce the auth outcome a combined query carries on its anchor row, returning the caller.
+
+    Single-row statements select the flags next to their result; list statements carry them on
+    every row. Either way the caller checks the anchor before trusting any domain column.
+    """
+    if row["deleted"]:
+        raise ApiError(401, "account_deleted", "This account has been deleted.")
+    if row["deletion_pending"]:
+        raise ApiError(403, "account_deletion_pending", "Account deletion is pending. Cancel it to keep using Trove.")
+    user_id = row["user_id"]
+    if user_id is None:  # pragma: no cover - the guarded upsert provides the row
+        raise _INVALID_TOKEN
+    return user_id if isinstance(user_id, uuid.UUID) else uuid.UUID(str(user_id))
 
 
 async def _principal_from_request(request: Request, *, allow_deleted: bool = False) -> Principal:

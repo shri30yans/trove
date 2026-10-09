@@ -13,7 +13,7 @@ from pydantic import Field
 
 from app import supabase_auth
 from app.errors import ApiError, dump_json
-from app.mcp_auth import current_principal, oauth_client_id
+from app.mcp_auth import current_principal, current_subject, oauth_client_id
 from app.memory_reads import get_memory_detail, list_memories_for_user
 from app.routes import search, spaces
 from app.schemas import UpdateSpaceRequest
@@ -63,8 +63,8 @@ def register_tools(server: FastMCP) -> None:
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
     async def list_spaces() -> dict[str, Any]:
         """List the signed-in user's Spaces, descriptions, and note counts."""
-        principal = await current_principal()
-        payload = await _trove_result(spaces.list_spaces_for_user(principal))
+        subject = await current_subject()
+        payload = await _trove_result(spaces.list_spaces_for_user(subject))
         return _serialize_tool_result(payload)
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
@@ -127,9 +127,9 @@ def register_tools(server: FastMCP) -> None:
         description: Annotated[str, Field(max_length=500)],
     ) -> dict[str, Any]:
         """Set a Space description after the user requests that change. An empty string clears it."""
-        principal = await current_principal()
+        subject = await current_subject()
         payload = UpdateSpaceRequest(description=description)
-        space = await _trove_result(spaces.update_space_for_user(space_id, principal, payload))
+        space = await _trove_result(spaces.update_space_for_user(space_id, subject, payload))
         return _serialize_tool_result({"space": space})
 
     @server.tool(

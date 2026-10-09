@@ -156,6 +156,7 @@ async def test_memory_open_for_subject_resolves_account_and_reads_in_one_round_t
     row = {
         "deleted": False,
         "deletion_pending": False,
+        "user_id": USER,
         "id": MEMORY,
         "kind": "text",
         "status": "ready",
@@ -200,7 +201,7 @@ async def test_memory_open_for_subject_resolves_account_and_reads_in_one_round_t
 
 
 async def test_memory_open_for_subject_reports_missing_as_none(monkeypatch):
-    row = {"deleted": False, "deletion_pending": False, "id": None}
+    row = {"deleted": False, "deletion_pending": False, "user_id": USER, "id": None}
     fetchrow = AsyncMock(return_value=row)
     monkeypatch.setattr(memory_reads, "fetchrow", fetchrow)
 
@@ -212,7 +213,7 @@ async def test_memory_open_for_subject_reports_missing_as_none(monkeypatch):
 async def test_memory_open_for_subject_keeps_not_found_behavior(monkeypatch):
     from app.auth import VerifiedSubject
 
-    fetchrow = AsyncMock(return_value={"deleted": False, "deletion_pending": False, "id": None})
+    fetchrow = AsyncMock(return_value={"deleted": False, "deletion_pending": False, "user_id": USER, "id": None})
     monkeypatch.setattr(memory_reads, "fetchrow", fetchrow)
 
     with pytest.raises(ApiError) as error:
@@ -222,13 +223,13 @@ async def test_memory_open_for_subject_keeps_not_found_behavior(monkeypatch):
 
 
 async def test_memory_open_for_subject_rejects_deleted_and_pending_accounts(monkeypatch):
-    fetchrow = AsyncMock(return_value={"deleted": True, "deletion_pending": False, "id": None})
+    fetchrow = AsyncMock(return_value={"deleted": True, "deletion_pending": False, "user_id": USER, "id": None})
     monkeypatch.setattr(memory_reads, "fetchrow", fetchrow)
     with pytest.raises(ApiError) as error:
         await memory_reads.read_memory_for_subject("tombstoned", None, None, MEMORY)
     assert error.value.code == "account_deleted"
 
-    fetchrow = AsyncMock(return_value={"deleted": False, "deletion_pending": True, "id": None})
+    fetchrow = AsyncMock(return_value={"deleted": False, "deletion_pending": True, "user_id": USER, "id": None})
     monkeypatch.setattr(memory_reads, "fetchrow", fetchrow)
     with pytest.raises(ApiError) as error:
         await memory_reads.read_memory_for_subject("pending", None, None, MEMORY)
