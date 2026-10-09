@@ -13,6 +13,7 @@ from typing import Any
 import asyncpg
 
 from app.config import get_config
+from app.domain.retrieval import HNSW_EF_SEARCH, HNSW_ITERATIVE_SCAN
 
 _pool: asyncpg.Pool | None = None
 MAX_DATABASE_CONNECTIONS = 5
@@ -53,6 +54,15 @@ async def _apply_codecs(connection: asyncpg.Connection) -> None:
             schema="pg_catalog",
             format="text",
         )
+    # Register pgvector's GUCs on each pooled session once. The Session pooler keeps these
+    # settings with the connection; vector queries can then avoid a SET LOCAL round trip and
+    # transaction solely for search tuning.
+    await connection.fetchval("SELECT '[0]'::vector")
+    await connection.execute(
+        "SELECT set_config('hnsw.ef_search', $1, false), set_config('hnsw.iterative_scan', $2, false)",
+        str(HNSW_EF_SEARCH),
+        HNSW_ITERATIVE_SCAN,
+    )
 
 
 async def open_pool() -> asyncpg.Pool:

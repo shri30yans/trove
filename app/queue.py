@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import asyncpg
 
-from app.db import get_pool, transaction
+from app.db import fetchrow, get_pool, transaction
 from app.domain.enums import JobResolution, JobStatus
 
 LEASE_SECONDS = 120
@@ -145,10 +145,10 @@ async def enqueue_memories_needing_embedding(
 
 async def claim_memory_processing_job() -> ClaimedJob | None:
     lease_token = uuid.uuid4()
-    async with transaction() as connection:
-        result = await connection.fetch(
-            """WITH candidate AS (
+    row = await fetchrow(
+        """WITH candidate AS MATERIALIZED (
                  SELECT job.memory_id
+                       , job.user_id
                  FROM memory_processing_jobs job
                  JOIN app_users account ON account.id=job.user_id
                  WHERE ((job.status='queued' AND job.available_at <= now())
@@ -160,39 +160,43 @@ async def claim_memory_processing_job() -> ClaimedJob | None:
                  ORDER BY (account.storage_plan='paid') DESC, job.available_at, job.created_at
                  LIMIT 1
                  FOR UPDATE OF job SKIP LOCKED
+               ), activated_memory AS (
+                 UPDATE memories memory
+                 SET status='processing', processing_error=NULL, updated_at=now()
+                 FROM candidate
+                 WHERE memory.id=candidate.memory_id AND memory.user_id=candidate.user_id
+                   AND memory.deleted_at IS NULL
+                 RETURNING memory.id AS memory_id, memory.user_id
+               ), claimed AS (
+                 UPDATE memory_processing_jobs job
+                 SET status=CASE WHEN active.memory_id IS NULL THEN 'completed' ELSE 'processing' END,
+                     attempt_count=job.attempt_count + CASE WHEN active.memory_id IS NULL THEN 0 ELSE 1 END,
+                     lease_token=CASE WHEN active.memory_id IS NULL THEN NULL ELSE $1::uuid END,
+                     lease_expires_at=CASE WHEN active.memory_id IS NULL THEN NULL
+                       ELSE now()+make_interval(secs => $2) END,
+                     last_error=CASE WHEN active.memory_id IS NULL THEN NULL ELSE job.last_error END,
+                     updated_at=now()
+                 FROM candidate
+                 LEFT JOIN activated_memory active
+                   ON active.memory_id=candidate.memory_id AND active.user_id=candidate.user_id
+                 WHERE job.memory_id=candidate.memory_id AND job.user_id=candidate.user_id
+                 RETURNING job.memory_id, job.user_id, job.lease_token, job.attempt_count,
+                   job.reindex_only, active.memory_id IS NOT NULL AS memory_claimed
                )
-               UPDATE memory_processing_jobs job
-               SET status='processing', attempt_count=job.attempt_count+1,
-                   lease_token=$1::uuid, lease_expires_at=now()+make_interval(secs => $2), updated_at=now()
-               FROM candidate
-               WHERE job.memory_id=candidate.memory_id
-               RETURNING job.memory_id, job.user_id, job.lease_token, job.attempt_count, job.reindex_only""",
-            lease_token,
-            LEASE_SECONDS,
-        )
-        if not result:
-            return None
-        row = dict(result[0])
-        job = ClaimedJob(
-            memory_id=str(row["memory_id"]),
-            user_id=str(row["user_id"]),
-            lease_token=str(row["lease_token"]),
-            attempt_count=int(row["attempt_count"]),
-            reindex_only=bool(row["reindex_only"]),
-        )
-
-        active_memory = await connection.fetchrow(
-            """UPDATE memories SET status='processing', processing_error=NULL, updated_at=now()
-               WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL RETURNING id""",
-            job.memory_uuid,
-            job.user_uuid,
-        )
-        if active_memory is None:
-            # The memory was soft-deleted between the candidate scan and this claim.
-            await complete_job(connection, job)
-            return None
-
-        return job
+               SELECT memory_id, user_id, lease_token, attempt_count, reindex_only
+               FROM claimed WHERE memory_claimed""",
+        lease_token,
+        LEASE_SECONDS,
+    )
+    if row is None:
+        return None
+    return ClaimedJob(
+        memory_id=str(row["memory_id"]),
+        user_id=str(row["user_id"]),
+        lease_token=str(row["lease_token"]),
+        attempt_count=int(row["attempt_count"]),
+        reindex_only=bool(row["reindex_only"]),
+    )
 
 
 async def complete_job(connection: asyncpg.Connection, job: ClaimedJob) -> None:

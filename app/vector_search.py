@@ -7,10 +7,8 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from app.db import transaction
+from app.db import fetch
 from app.domain.retrieval import (
-    HNSW_EF_SEARCH,
-    HNSW_ITERATIVE_SCAN,
     RELATED_CANDIDATE_LIMIT,
     RESURFACING_MIN_SIMILARITY,
     RESURFACING_PAGE_SIZE,
@@ -74,14 +72,9 @@ async def save_asset_embedding(
 
 
 async def _vector_query(sql: str, args: Sequence[Any]) -> list[dict[str, Any]]:
-    async with transaction() as connection:
-        # set_config(..., is_local => true) is SET LOCAL; it takes a bind parameter, SET does not.
-        await connection.fetchval(
-            "SELECT set_config('hnsw.ef_search', $1, true), set_config('hnsw.iterative_scan', $2, true)",
-            str(HNSW_EF_SEARCH),
-            HNSW_ITERATIVE_SCAN,
-        )
-        return [dict(row) for row in await connection.fetch(sql, *args)]
+    # HNSW settings are installed when each pooled session is initialized. One fetch keeps the
+    # vector query to a single database round trip instead of wrapping SET LOCAL in a transaction.
+    return await fetch(sql, *args)
 
 
 async def find_semantic_memories(

@@ -67,9 +67,14 @@ async def _transaction(connection: RecordingConnection) -> AsyncIterator[Recordi
 
 @pytest.fixture
 def connection(monkeypatch: pytest.MonkeyPatch) -> RecordingConnection:
-    """A recording connection that app.queue's transaction() hands out."""
+    """Recording database calls made directly and through a transaction."""
     fake = RecordingConnection()
     monkeypatch.setattr(queue, "transaction", lambda: _transaction(fake))
+
+    async def fetchrow(sql: str, *args: Any) -> Any:
+        return await fake.fetchrow(sql, *args)
+
+    monkeypatch.setattr(queue, "fetchrow", fetchrow)
     return fake
 
 
@@ -190,52 +195,41 @@ async def test_a_deleted_memory_retires_the_job(connection: RecordingConnection)
     )
 
 
-async def test_a_claim_on_a_deleted_memory_completes_the_job_without_returning_it(
+async def test_a_claim_that_loses_its_memory_completes_the_job_without_returning_it(
     connection: RecordingConnection,
 ) -> None:
-    connection.fetch_rows = [
-        [
-            {
-                "memory_id": MEMORY_ID,
-                "user_id": USER_ID,
-                "lease_token": LEASE_ID,
-                "attempt_count": 1,
-                "reindex_only": False,
-            }
-        ]
-    ]
+    connection.fetchrow_rows = [None]
     assert await queue.claim_memory_processing_job() is None
-    assert connection.bindings[-1] == (
-        uuid.UUID(MEMORY_ID),
-        uuid.UUID(USER_ID),
-        uuid.UUID(LEASE_ID),
-        JobStatus.COMPLETED.value,
-    )
+    statement = connection.statements[0]
+    assert "UPDATE memories memory" in statement
+    assert "status=CASE WHEN active.memory_id IS NULL THEN 'completed' ELSE 'processing' END" in statement
+    assert "lease_token=CASE WHEN active.memory_id IS NULL THEN NULL ELSE $1::uuid END" in statement
 
 
 async def test_an_empty_claim_writes_nothing(connection: RecordingConnection) -> None:
     assert await queue.claim_memory_processing_job() is None
-    assert [kind for kind, _, _ in connection.calls] == ["fetch"]
+    assert [kind for kind, _, _ in connection.calls] == ["fetchrow"]
+    assert "FOR UPDATE OF job SKIP LOCKED" in connection.statements[0]
 
 
 async def test_a_claim_hands_back_the_job_and_marks_the_memory_processing(connection: RecordingConnection) -> None:
-    connection.fetch_rows = [
-        [
-            {
-                "memory_id": MEMORY_ID,
-                "user_id": USER_ID,
-                "lease_token": LEASE_ID,
-                "attempt_count": 2,
-                "reindex_only": False,
-            }
-        ]
+    connection.fetchrow_rows = [
+        {
+            "memory_id": MEMORY_ID,
+            "user_id": USER_ID,
+            "lease_token": LEASE_ID,
+            "attempt_count": 2,
+            "reindex_only": False,
+        }
     ]
-    connection.fetchrow_rows = [{"id": MEMORY_ID}]
     job = await queue.claim_memory_processing_job()
     assert job is not None
     assert (job.memory_id, job.user_id, job.lease_token, job.attempt_count) == (MEMORY_ID, USER_ID, LEASE_ID, 2)
-    assert "UPDATE memories SET status='processing', processing_error=NULL" in connection.statements[1]
-    assert connection.bindings[1] == (uuid.UUID(MEMORY_ID), uuid.UUID(USER_ID))
+    assert len(connection.calls) == 1
+    statement = connection.statements[0]
+    assert "UPDATE memories memory SET status='processing', processing_error=NULL" in statement
+    assert "UPDATE memory_processing_jobs job" in statement
+    assert connection.bindings[0][1] == queue.LEASE_SECONDS
 
 
 class FakePool:
