@@ -9,7 +9,7 @@ import uuid
 from fastapi import APIRouter, Depends, Request
 
 from app.auth import Principal, as_uuid, require_auth
-from app.db import fetch, fetchrow, transaction
+from app.db import current_request_id, fetch, fetchrow, transaction
 from app.errors import ApiError, ApiJSONResponse, respond
 from app.memory_reads import get_memory_detail, list_memories_for_user, read_back
 from app.queue import enqueue_memory_processing
@@ -153,7 +153,9 @@ async def list_memory_tags(request: Request, principal: Principal = Depends(requ
 async def get_memory(memory_id: str, principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
     started = time.perf_counter()
     memory = await get_memory_detail(memory_id, principal, record_opened=True)
-    logger.info("memory_open elapsed_ms=%.1f", (time.perf_counter() - started) * 1000)
+    logger.info(
+        "memory_open request_id=%s elapsed_ms=%.1f", current_request_id(), (time.perf_counter() - started) * 1000
+    )
     return respond({"memory": memory})
 
 

@@ -38,6 +38,7 @@ EXEMPT_STATEMENTS = {
     "DELETE FROM app_users WHERE id=": _APP_USER_DELETE_REASON,
     "SELECT 1 FROM deleted_auth_subjects": _AUTH_SUBJECT_REASON,
     "SELECT EXISTS(SELECT 1 FROM deleted_auth_subjects": _AUTH_SUBJECT_REASON,
+    "WITH status AS ( SELECT EXISTS(SELECT 1 FROM deleted_auth_subjects": _AUTH_SUBJECT_REASON,
     "SELECT 1 FROM account_deletion_requests": _AUTH_SUBJECT_REASON,
     "SELECT requested_at,delete_after FROM account_deletion_requests": _AUTH_SUBJECT_REASON,
     "SELECT requested_at,delete_after,(delete_after > now()) AS deletion_cancellable": _AUTH_SUBJECT_REASON,

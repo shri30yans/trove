@@ -11,7 +11,7 @@ from typing import Self
 from fastapi import APIRouter, Depends, Request
 
 from app.auth import Principal, as_uuid, require_auth
-from app.db import execute, fetch, fetchrow
+from app.db import current_request_id, execute, fetch, fetchrow
 from app.domain.retrieval import (
     RELATED_CANDIDATE_LIMIT,
     RELATED_MIN_SIMILARITY,
@@ -113,6 +113,7 @@ async def search(request: Request, principal: Principal = Depends(require_auth))
 
 async def search_memories_for_user(principal: Principal, query: Mapping[str, str]) -> SearchResults:
     """Search one caller's memories using plain query values, shared by HTTP and MCP."""
+    started = time.perf_counter()
     term = (query.get("q") or "").strip()
     tag = (query.get("tag") or "").strip().lower() or None
     if (not term and not tag) or len(term) > 1000:
@@ -131,11 +132,20 @@ async def search_memories_for_user(principal: Principal, query: Mapping[str, str
     if mode not in {"hybrid", "raw"}:
         raise ApiError(400, "invalid_search_mode", "Choose hybrid or raw text search.")
 
-    embedding = (
-        (await _embed_search_query(term, await _embeddings_enabled_for_user(user_id)) if mode == "hybrid" else None)
-        if term
-        else None
-    )
+    embedding: Embedding | None = None
+    embedding_ms = 0.0
+    if term and mode == "hybrid":
+        embedding_started = time.perf_counter()
+        embedding = await _embed_search_query(term, await _embeddings_enabled_for_user(user_id))
+        embedding_ms = (time.perf_counter() - embedding_started) * 1000
+        logger.info(
+            "memory_search request_id=%s stage=embedding elapsed_ms=%.1f enabled=%s",
+            current_request_id(),
+            embedding_ms,
+            embedding is not None,
+        )
+
+    semantic_started = time.perf_counter()
     semantic = (
         await find_semantic_memories(
             principal.id,
@@ -150,7 +160,15 @@ async def search_memories_for_user(principal: Principal, query: Mapping[str, str
         if embedding
         else []
     )
+    if embedding:
+        logger.info(
+            "memory_search request_id=%s stage=semantic elapsed_ms=%.1f candidates=%s",
+            current_request_id(),
+            (time.perf_counter() - semantic_started) * 1000,
+            len(semantic),
+        )
 
+    lexical_started = time.perf_counter()
     rows = await fetch(
         rf"""WITH q AS (SELECT websearch_to_tsquery('simple', $2) AS terms),
        semantic_hits AS (
@@ -198,6 +216,18 @@ async def search_memories_for_user(principal: Principal, query: Mapping[str, str
         tag,
         limit,
     )
+    logger.info(
+        "memory_search request_id=%s stage=ranked_query elapsed_ms=%.1f results=%s",
+        current_request_id(),
+        (time.perf_counter() - lexical_started) * 1000,
+        len(rows),
+    )
+    logger.info(
+        "memory_search request_id=%s outcome=success elapsed_ms=%.1f mode=%s",
+        current_request_id(),
+        (time.perf_counter() - started) * 1000,
+        mode,
+    )
     return SearchResults(
         query=term, semanticSearch=embedding is not None, memories=[SearchMemory.from_row(row) for row in rows]
     )
@@ -216,11 +246,19 @@ async def related_memories(memory_id: str, principal: Principal = Depends(requir
         target,
         user_id,
     )
-    logger.info("memory_related stage=eligibility elapsed_ms=%.1f", (time.perf_counter() - eligibility_started) * 1000)
+    logger.info(
+        "memory_related request_id=%s stage=eligibility elapsed_ms=%.1f",
+        current_request_id(),
+        (time.perf_counter() - eligibility_started) * 1000,
+    )
     if source is None or not source["memory_exists"]:
         raise ApiError(404, "memory_not_found", "Memory not found.")
     if not source["embeddings_enabled"]:
-        logger.info("memory_related outcome=disabled elapsed_ms=%.1f", (time.perf_counter() - started) * 1000)
+        logger.info(
+            "memory_related request_id=%s outcome=disabled elapsed_ms=%.1f",
+            current_request_id(),
+            (time.perf_counter() - started) * 1000,
+        )
         return respond({"memories": []})
 
     model_set = embeddings.models()
@@ -231,12 +269,17 @@ async def related_memories(memory_id: str, principal: Principal = Depends(requir
         else []
     )
     logger.info(
-        "memory_related stage=vector_search elapsed_ms=%.1f candidates=%s",
+        "memory_related request_id=%s stage=vector_search elapsed_ms=%.1f candidates=%s",
+        current_request_id(),
         (time.perf_counter() - vector_started) * 1000,
         len(similar),
     )
     if not similar:
-        logger.info("memory_related outcome=no_candidates elapsed_ms=%.1f", (time.perf_counter() - started) * 1000)
+        logger.info(
+            "memory_related request_id=%s outcome=no_candidates elapsed_ms=%.1f",
+            current_request_id(),
+            (time.perf_counter() - started) * 1000,
+        )
         return respond({"memories": []})
 
     hydrate_started = time.perf_counter()
@@ -260,8 +303,16 @@ async def related_memories(memory_id: str, principal: Principal = Depends(requir
         RELATED_PAGE_SIZE,
     )
     memories = [RelatedMemory.from_row(row) for row in rows]
-    logger.info("memory_related stage=hydrate elapsed_ms=%.1f", (time.perf_counter() - hydrate_started) * 1000)
-    logger.info("memory_related outcome=success elapsed_ms=%.1f", (time.perf_counter() - started) * 1000)
+    logger.info(
+        "memory_related request_id=%s stage=hydrate elapsed_ms=%.1f",
+        current_request_id(),
+        (time.perf_counter() - hydrate_started) * 1000,
+    )
+    logger.info(
+        "memory_related request_id=%s outcome=success elapsed_ms=%.1f",
+        current_request_id(),
+        (time.perf_counter() - started) * 1000,
+    )
     return respond({"memories": memories})
 
 

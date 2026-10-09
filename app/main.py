@@ -133,6 +133,7 @@ app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=MAX_BODY_BYTES)
 async def measure_request(request: Request, call_next: Any) -> Response:
     """Record safe route-level latency and attach a per-request correlation ID."""
     request_id = uuid.uuid4().hex
+    request_token = db.set_request_id(request_id)
     started = time.perf_counter()
     status_code = 500
     endpoint = "unmatched"
@@ -152,6 +153,7 @@ async def measure_request(request: Request, call_next: Any) -> Response:
             status_code,
             (time.perf_counter() - started) * 1000,
         )
+        db.reset_request_id(request_token)
 
 
 _config = get_config()

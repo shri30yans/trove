@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar, Token
 from typing import Any
 
 import asyncpg
@@ -13,6 +16,30 @@ from app.config import get_config
 
 _pool: asyncpg.Pool | None = None
 MAX_DATABASE_CONNECTIONS = 5
+logger = logging.getLogger("trove.api.database")
+_request_id: ContextVar[str] = ContextVar("trove_request_id", default="-")
+
+
+def set_request_id(request_id: str) -> Token[str]:
+    return _request_id.set(request_id)
+
+
+def reset_request_id(token: Token[str]) -> None:
+    _request_id.reset(token)
+
+
+def current_request_id() -> str:
+    return _request_id.get()
+
+
+def _log_timing(operation: str, acquire_ms: float, work_ms: float) -> None:
+    logger.info(
+        "db_operation request_id=%s operation=%s acquire_ms=%.1f work_ms=%.1f",
+        _request_id.get(),
+        operation,
+        acquire_ms,
+        work_ms,
+    )
 
 
 async def _apply_codecs(connection: asyncpg.Connection) -> None:
@@ -59,28 +86,59 @@ def get_pool() -> asyncpg.Pool:
 
 
 async def fetch(sql: str, *args: Any) -> list[dict[str, Any]]:
+    started = time.perf_counter()
     async with get_pool().acquire() as connection:
-        return [dict(row) for row in await connection.fetch(sql, *args)]
+        acquired = time.perf_counter()
+        try:
+            return [dict(row) for row in await connection.fetch(sql, *args)]
+        finally:
+            finished = time.perf_counter()
+            _log_timing("fetch", (acquired - started) * 1000, (finished - acquired) * 1000)
 
 
 async def fetchrow(sql: str, *args: Any) -> dict[str, Any] | None:
+    started = time.perf_counter()
     async with get_pool().acquire() as connection:
-        row = await connection.fetchrow(sql, *args)
-        return None if row is None else dict(row)
+        acquired = time.perf_counter()
+        try:
+            row = await connection.fetchrow(sql, *args)
+            return None if row is None else dict(row)
+        finally:
+            finished = time.perf_counter()
+            _log_timing("fetchrow", (acquired - started) * 1000, (finished - acquired) * 1000)
 
 
 async def fetchval(sql: str, *args: Any) -> Any:
+    started = time.perf_counter()
     async with get_pool().acquire() as connection:
-        return await connection.fetchval(sql, *args)
+        acquired = time.perf_counter()
+        try:
+            return await connection.fetchval(sql, *args)
+        finally:
+            finished = time.perf_counter()
+            _log_timing("fetchval", (acquired - started) * 1000, (finished - acquired) * 1000)
 
 
 async def execute(sql: str, *args: Any) -> None:
+    started = time.perf_counter()
     async with get_pool().acquire() as connection:
-        await connection.execute(sql, *args)
+        acquired = time.perf_counter()
+        try:
+            await connection.execute(sql, *args)
+        finally:
+            finished = time.perf_counter()
+            _log_timing("execute", (acquired - started) * 1000, (finished - acquired) * 1000)
 
 
 @asynccontextmanager
 async def transaction() -> AsyncIterator[asyncpg.Connection]:
     """One pooled connection inside a transaction that commits unless the body raises."""
-    async with get_pool().acquire() as connection, connection.transaction():
-        yield connection
+    started = time.perf_counter()
+    async with get_pool().acquire() as connection:
+        acquired = time.perf_counter()
+        try:
+            async with connection.transaction():
+                yield connection
+        finally:
+            finished = time.perf_counter()
+            _log_timing("transaction", (acquired - started) * 1000, (finished - acquired) * 1000)

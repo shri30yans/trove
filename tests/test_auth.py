@@ -116,7 +116,16 @@ class _Rows:
 
     async def __call__(self, sql: str, *args: Any) -> dict[str, Any] | None:
         self.statements.append((" ".join(sql.split()), args))
-        if sql.lstrip().upper().startswith("SELECT"):
+        statement = sql.lstrip().upper()
+        if statement.startswith("WITH"):
+            if not self.exists or auth._profile_changed(self.profile, args[1], args[2]):
+                self.exists = True
+                self.profile = {
+                    "email": args[1] or self.profile["email"],
+                    "display_name": args[2] or self.profile["display_name"],
+                }
+            return {"deleted": False, "deletion_pending": False, "id": str(uuid.UUID(int=7)), **self.profile}
+        if statement.startswith("SELECT"):
             if not self.exists:
                 return None
             return {"id": str(uuid.UUID(int=7)), **self.profile}
@@ -125,10 +134,6 @@ class _Rows:
             "display_name": args[2] or self.profile["display_name"],
         }
         return {"id": str(uuid.UUID(int=7)), **self.profile}
-
-
-async def _no_deleted_subject(_sql: str, *_args: Any) -> None:
-    return None
 
 
 async def test_local_hmac_tokens_are_not_accepted_as_provider_sessions(
@@ -237,7 +242,6 @@ async def test_require_auth_carries_a_verified_token_into_a_principal(jwks, monk
     jwks(key=_RSA_JWK)
     rows = _Rows(exists=False)
     monkeypatch.setattr(auth, "fetchrow", rows)
-    monkeypatch.setattr(auth, "fetchval", _no_deleted_subject)
     principal = await auth.require_auth(_Request({"authorization": f"Bearer {_rs256_token()}"}))
     assert principal.subject == "auth0|user-1"
     assert principal.email == "reader@trove.example.test"
@@ -248,21 +252,21 @@ async def test_a_first_request_for_a_subject_creates_it_once(jwks, monkeypatch) 
     jwks(key=_RSA_JWK)
     rows = _Rows(exists=False)
     monkeypatch.setattr(auth, "fetchrow", rows)
-    monkeypatch.setattr(auth, "fetchval", _no_deleted_subject)
     await auth.require_auth(_Request({"authorization": f"Bearer {_rs256_token()}"}))
-    assert [statement.split()[0] for statement, _ in rows.statements] == ["SELECT", "INSERT"]
-    assert rows.statements[0][1] == ("auth0|user-1",)
-    assert "ON CONFLICT (auth_subject) DO UPDATE" in rows.statements[1][0]
+    assert len(rows.statements) == 1
+    assert rows.statements[0][1] == ("auth0|user-1", "reader@trove.example.test", "Reader", False)
+    assert "ON CONFLICT (auth_subject) DO UPDATE" in rows.statements[0][0]
+    assert "deleted_auth_subjects" in rows.statements[0][0]
+    assert "account_deletion_requests" in rows.statements[0][0]
 
 
 async def test_a_request_that_changes_nothing_writes_nothing(jwks, monkeypatch) -> None:
     jwks(key=_RSA_JWK)
     rows = _Rows(email="reader@trove.example.test", display_name="Reader")
     monkeypatch.setattr(auth, "fetchrow", rows)
-    monkeypatch.setattr(auth, "fetchval", _no_deleted_subject)
     principal = await auth.require_auth(_Request({"authorization": f"Bearer {_rs256_token()}"}))
     # The upsert used to run here, locking the row and rewriting updated_at on every read.
-    assert [statement.split()[0] for statement, _ in rows.statements] == ["SELECT"]
+    assert len(rows.statements) == 1
     assert principal.id == str(uuid.UUID(int=7))
 
 
@@ -270,9 +274,8 @@ async def test_a_moved_email_or_name_is_written_back_once(jwks, monkeypatch) -> 
     jwks(key=_RSA_JWK)
     rows = _Rows(email="old@trove.example.test", display_name="Reader")
     monkeypatch.setattr(auth, "fetchrow", rows)
-    monkeypatch.setattr(auth, "fetchval", _no_deleted_subject)
     principal = await auth.require_auth(_Request({"authorization": f"Bearer {_rs256_token()}"}))
-    assert len(rows.statements) == 2
+    assert len(rows.statements) == 1
     assert principal.email == "reader@trove.example.test"
 
 
@@ -280,18 +283,22 @@ async def test_a_token_without_profile_claims_does_not_blank_the_stored_profile(
     jwks(key=_RSA_JWK)
     rows = _Rows(email="reader@trove.example.test", display_name="Reader")
     monkeypatch.setattr(auth, "fetchrow", rows)
-    monkeypatch.setattr(auth, "fetchval", _no_deleted_subject)
     token = _rs256_token(email=None, name=None)
     principal = await auth.require_auth(_Request({"authorization": f"Bearer {token}"}))
-    assert [statement.split()[0] for statement, _ in rows.statements] == ["SELECT"]
+    assert len(rows.statements) == 1
     assert principal.email == "reader@trove.example.test"
 
 
 async def test_deleted_subject_is_blocked_from_normal_routes_but_can_retry_deletion(jwks, monkeypatch) -> None:
     jwks(key=_RSA_JWK)
-    monkeypatch.setattr(auth, "fetchval", lambda *_args: _deleted_subject())
-    rows = _Rows(email="reader@trove.example.test", display_name="Reader")
-    monkeypatch.setattr(auth, "fetchrow", rows)
+    calls: list[bool] = []
+
+    async def account_state(_sql: str, *_args: Any) -> dict[str, Any]:
+        allow_deleted = bool(_args[3])
+        calls.append(allow_deleted)
+        return {"deleted": True, "deletion_pending": False, "id": None, "email": None, "display_name": None}
+
+    monkeypatch.setattr(auth, "fetchrow", account_state)
     request = _Request({"authorization": f"Bearer {_rs256_token()}"})
 
     with pytest.raises(ApiError) as raised:
@@ -300,25 +307,28 @@ async def test_deleted_subject_is_blocked_from_normal_routes_but_can_retry_delet
 
     principal = await auth.require_account_deletion_auth(request)
     assert principal.subject == "auth0|user-1"
+    assert principal.id == ""
+    assert calls == [False, True]
 
 
 async def test_pending_deletion_blocks_normal_feature_routes(jwks, monkeypatch) -> None:
     jwks(key=_RSA_JWK)
-    results = iter((None, 1))
 
-    async def deletion_record(*_args: Any) -> Any:
-        return next(results)
+    async def account_state(*_args: Any) -> dict[str, Any]:
+        return {
+            "deleted": False,
+            "deletion_pending": True,
+            "id": str(uuid.UUID(int=7)),
+            "email": None,
+            "display_name": None,
+        }
 
-    monkeypatch.setattr(auth, "fetchval", deletion_record)
+    monkeypatch.setattr(auth, "fetchrow", account_state)
     with pytest.raises(ApiError) as raised:
         await auth.require_auth(_Request({"authorization": f"Bearer {_rs256_token()}"}))
 
     assert raised.value.status_code == 403
     assert raised.value.code == "account_deletion_pending"
-
-
-async def _deleted_subject() -> int:
-    return 1
 
 
 def test_the_profile_only_moves_when_the_token_says_something_different() -> None:

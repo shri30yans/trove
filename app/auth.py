@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from app.config import get_config
-from app.db import fetchrow, fetchval
+from app.db import fetchrow
 from app.errors import ApiError
 
 # Only asymmetric algorithms are accepted from a remote JWKS so that a public key can never be
@@ -126,7 +126,40 @@ async def _principal_from_request(request: Request, *, allow_deleted: bool = Fal
     subject = payload.get("sub")
     if not isinstance(subject, str) or not subject:
         raise _INVALID_TOKEN
-    if await fetchval("SELECT 1 FROM deleted_auth_subjects WHERE auth_subject=$1", subject):
+    account = await fetchrow(
+        """WITH status AS (
+             SELECT EXISTS(SELECT 1 FROM deleted_auth_subjects WHERE auth_subject=$1) AS deleted,
+                    NOT $4::boolean AND EXISTS(
+                      SELECT 1 FROM account_deletion_requests WHERE auth_subject=$1
+                    ) AS deletion_pending
+           ), existing AS MATERIALIZED (
+             SELECT id, email, display_name FROM app_users WHERE auth_subject=$1
+           ), profile AS (
+             INSERT INTO app_users (auth_subject, email, display_name)
+             SELECT $1, $2, $3 FROM status s LEFT JOIN existing e ON TRUE
+             WHERE NOT s.deleted AND NOT s.deletion_pending
+               AND (e.id IS NULL
+                 OR ($2::text IS NOT NULL AND e.email IS DISTINCT FROM $2::text)
+                 OR ($3::text IS NOT NULL AND e.display_name IS DISTINCT FROM $3::text))
+             ON CONFLICT (auth_subject) DO UPDATE SET
+               email = COALESCE(EXCLUDED.email, app_users.email),
+               display_name = COALESCE(EXCLUDED.display_name, app_users.display_name),
+               updated_at = now()
+             RETURNING id, email, display_name
+           )
+           SELECT s.deleted, s.deletion_pending,
+                  COALESCE(p.id, e.id) AS id,
+                  COALESCE(p.email, e.email) AS email,
+                  COALESCE(p.display_name, e.display_name) AS display_name
+           FROM status s LEFT JOIN existing e ON TRUE LEFT JOIN profile p ON TRUE""",
+        subject,
+        _as_str(payload.get("email")),
+        _as_str(payload.get("name")),
+        allow_deleted,
+    )
+    if account is None:
+        raise _INVALID_TOKEN
+    if account["deleted"]:
         if allow_deleted:
             return Principal(
                 id="",
@@ -135,12 +168,12 @@ async def _principal_from_request(request: Request, *, allow_deleted: bool = Fal
                 displayName=_as_str(payload.get("name")),
             )
         raise ApiError(401, "account_deleted", "This account has been deleted.")
-    if not allow_deleted and await fetchval("SELECT 1 FROM account_deletion_requests WHERE auth_subject=$1", subject):
+    if account["deletion_pending"]:
         raise ApiError(403, "account_deletion_pending", "Account deletion is pending. Cancel it to keep using Trove.")
-    return await _load_principal(
-        subject,
-        _as_str(payload.get("email")),
-        _as_str(payload.get("name")),
+    if account["id"] is None:  # pragma: no cover - the guarded upsert provides the first row
+        raise _INVALID_TOKEN
+    return Principal(
+        id=str(account["id"]), subject=subject, email=account["email"], displayName=account["display_name"]
     )
 
 
