@@ -5,13 +5,14 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.responses import Response
+from starlette.responses import FileResponse, Response
 
 from app import db
 from app.config import get_config
@@ -138,6 +139,15 @@ async def handle_unexpected(request: Request, error: Exception) -> ApiJSONRespon
 @app.get("/health/live")
 async def health_live() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/brand/trove.png", include_in_schema=False)
+async def trove_brand_image() -> FileResponse:
+    return FileResponse(
+        Path(__file__).parent / "assets" / "trove-logo.png",
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.get("/health/ready")

@@ -171,9 +171,7 @@ async def confirm_email(token_hash: str) -> None:
         if isinstance(body, dict):
             text = " ".join(str(body.get(key, "")) for key in ("error_code", "msg", "message")).lower()
         if "expir" in text:
-            raise ApiError(
-                400, "email_link_expired", "This confirmation link has expired. Request a new one."
-            )
+            raise ApiError(400, "email_link_expired", "This confirmation link has expired. Request a new one.")
         raise ApiError(400, "email_link_invalid", "This confirmation link is invalid. Request a new one.")
     raise _provider_error(response, operation="confirm_email")
 

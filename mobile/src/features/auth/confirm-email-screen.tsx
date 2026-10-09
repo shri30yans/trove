@@ -4,51 +4,44 @@ import * as Linking from 'expo-linking';
 import { StyleSheet, Text, View } from 'react-native';
 import { Button, FormScreen, Notice, TextField } from '../../components';
 import { confirmEmailWithToken } from '../../api/client';
+import { parseConfirmationLink } from './confirmation-link';
 import { useAuth } from '../../providers/auth-provider';
 import { useThemedStyles } from '../../providers/theme-provider';
 import { spacing, text, type Palette } from '../../theme';
 
-type ConfirmState = 'checking' | 'confirmed' | 'failed';
-
-function tokenHashFromUrl(url: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-  const fromQuery = parsed.searchParams.get('token_hash') ?? parsed.searchParams.get('token');
-  if (fromQuery) return fromQuery;
-  const fragment = new URLSearchParams(parsed.hash.replace(/^#/, ''));
-  return fragment.get('token_hash') ?? fragment.get('token');
-}
+type VerificationResult =
+  | { url: string; status: 'confirmed' }
+  | { url: string; status: 'failed'; message: string };
 
 export function ConfirmEmailScreen() {
   const url = Linking.useURL();
-  const tokenHash = useMemo(() => (url ? tokenHashFromUrl(url) : null), [url]);
+  const confirmationLink = useMemo(() => (url ? parseConfirmationLink(url) : null), [url]);
   const { resendConfirmation } = useAuth();
   const styles = useThemedStyles(makeStyles);
-  // No token in the deep link means Supabase already verified it server-side
-  // before redirecting here, so the link is confirmed without another call.
-  const [state, setState] = useState<ConfirmState>('checking');
+  // Supabase verifies ConfirmationURL links before redirecting here. Its error query/fragment must
+  // take precedence; only an error-free callback counts as provider confirmation.
+  const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [resending, setResending] = useState(false);
   const [resent, setResent] = useState(false);
 
   useEffect(() => {
-    if (!tokenHash) return;
+    if (!url || confirmationLink?.kind !== 'token') return;
     let active = true;
-    void confirmEmailWithToken(tokenHash).then(() => {
-      if (active) setState('confirmed');
+    void confirmEmailWithToken(confirmationLink.tokenHash).then(() => {
+      if (active) setVerificationResult({ url, status: 'confirmed' });
     }).catch((error: unknown) => {
       if (active) {
-        setMessage(error instanceof Error ? error.message : 'This confirmation link is invalid. Request a new one below.');
-        setState('failed');
+        setVerificationResult({
+          url,
+          status: 'failed',
+          message: error instanceof Error ? error.message : 'This confirmation link is invalid. Request a new one below.',
+        });
       }
     });
     return () => { active = false; };
-  }, [tokenHash]);
+  }, [confirmationLink, url]);
 
   async function resend() {
     setMessage(null);
@@ -68,7 +61,13 @@ export function ConfirmEmailScreen() {
     }
   }
 
-  const confirmed = state === 'confirmed' || !tokenHash;
+  const resultForCurrentUrl = url && verificationResult?.url === url ? verificationResult : null;
+  const confirmed = confirmationLink?.kind === 'confirmed' || resultForCurrentUrl?.status === 'confirmed';
+  const failed = confirmationLink?.kind === 'failed' || resultForCurrentUrl?.status === 'failed';
+  const confirmationMessage = confirmationLink?.kind === 'failed'
+    ? confirmationLink.message
+    : resultForCurrentUrl?.status === 'failed' ? resultForCurrentUrl.message : null;
+  const checking = confirmationLink?.kind === 'token' && resultForCurrentUrl === null;
 
   if (!url) {
     return <FormScreen contentContainerStyle={styles.content}>
@@ -85,15 +84,16 @@ export function ConfirmEmailScreen() {
     <View style={styles.heading}>
       <Text style={styles.brand}>Trove</Text>
       <Text style={styles.title}>
-        {confirmed ? 'Email confirmed' : state === 'failed' ? 'Confirmation link expired' : 'Confirming your email'}
+        {confirmed ? 'Email confirmed' : failed ? 'Confirmation link unavailable' : 'Confirming your email'}
       </Text>
     </View>
-    {!confirmed && state === 'checking' && <Notice body="Checking your confirmation link…" tone="info" />}
+    {!confirmed && checking && <Notice body="Checking your confirmation link…" tone="info" />}
     {confirmed && <>
       <Notice body="Your email is confirmed. Sign in with your password to start using Trove." tone="info" />
       <Button label="Continue to sign in" fills size="large" onPress={() => router.replace('/')} />
     </>}
-    {state === 'failed' && !confirmed && <>
+    {failed && !confirmed && <>
+      {confirmationMessage && <Notice body={confirmationMessage} tone="danger" />}
       {message && <Notice body={message} tone="danger" />}
       {resent && <Notice body="New confirmation email sent. Check your inbox and spam folder." tone="info" />}
       <View style={styles.form}>

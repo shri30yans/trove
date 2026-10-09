@@ -59,3 +59,11 @@ Run checks appropriate to changed code:
 - Integration changes: verify the real path through authorization, transfer, provider persistence verification, acknowledgement, and safe retry using isolated synthetic data. Also check rejection/ownership behavior. Never use private user content as a test fixture.
 
 State separately what was verified in unit tests, against live services, and on the actual device. An export is not a native build or a device test. If required credentials or infrastructure are unavailable, preserve work, report the exact blocker, and do not claim end-to-end completion.
+
+### Production release verification
+
+- Source checks do not prove production is running that source. For every API release, compare the intended Git SHA with the active Heroku release SHA using `heroku releases --app trove --num 3` (this command lists deploy revisions only). Do not use `heroku releases:info`, `heroku config`, or `heroku config:get` in a response-visible terminal: Heroku CLI output can contain all production credentials.
+- After an auth/API release, run `make auth-release-check`. This makes only safe, malformed requests and verifies the API routes, response contracts, liveness, and public email logo asset. It never submits a real email or prints response bodies.
+- For a full signup/resend/confirmation check, use a dedicated synthetic account and inbox. Verify a fresh email's redirect target and app deep link; old email links preserve the redirect encoded when they were created and must be resent after a redirect fix.
+- Supabase Management API responses can include SMTP and template configuration. Read and print only explicitly allowlisted non-secret fields; never dump full responses, auth headers, tokens, or Heroku config. Read back changed fields through a filtered script.
+- Treat any command output containing credentials as a security incident. Stop copying or forwarding it, identify exactly which credentials were exposed without repeating their values, and coordinate rotation with service configuration updates before claiming containment.

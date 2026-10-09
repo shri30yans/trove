@@ -48,8 +48,8 @@ export function VerifyEmailScreen() {
     </View>
     <Text style={styles.help}>
       {address
-        ? `We sent a confirmation link to ${address}. Tap Confirm email address in that message — Trove will open again to finish. Check spam if you don't see it.`
-        : 'We sent a confirmation link to your address. Tap Confirm email address in that message — Trove will open again to finish.'}
+        ? `We sent a confirmation link to ${address}. Tap the link to verify your account. Check spam if you don't see it.`
+        : 'We sent a confirmation link to your address. Tap the link to verify your account.'}
     </Text>
     {notice && <Notice body={notice.body} tone={notice.tone} />}
     <View style={styles.form}>
@@ -72,7 +72,7 @@ function makeStyles(colors: Palette) {
     heading: { gap: spacing.md },
     brand: { color: colors.blueDeep, ...text.eyebrow, textTransform: 'uppercase' },
     title: { color: colors.foreground, ...text.page },
-    help: { color: colors.muted, ...text.body },
+    help: { color: colors.muted, ...text.caption },
     form: { gap: spacing.lg },
   });
 }

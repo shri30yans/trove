@@ -1,4 +1,4 @@
-.PHONY: check lint types test migrate run mobile-check mobile-verify
+.PHONY: check lint types test migrate run mobile-check mobile-verify auth-release-check
 
 check: lint types test mobile-check
 
@@ -23,3 +23,7 @@ mobile-check:
 
 mobile-verify:
 	npm --prefix mobile run verify:ios
+
+# Safe post-deploy probe: malformed auth requests verify route contracts without sending email.
+auth-release-check:
+	.venv/bin/python tools/check_auth_release.py https://api.trove.zyphrlabs.com

@@ -25,6 +25,7 @@ ROUTE_TABLE = {
     ("GET", "/health/live"),
     ("GET", "/health/ready"),
     ("GET", "/health/embeddings"),
+    ("GET", "/brand/trove.png"),
     ("GET", "/oauth/consent"),
     ("POST", "/oauth/consent/decision"),
     ("POST", "/oauth/consent/login"),

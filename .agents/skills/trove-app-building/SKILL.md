@@ -48,3 +48,15 @@ Use meaningful regression tests for the changed invariants: failure classificati
 For integration changes, exercise the actual API and provider with isolated synthetic data. Verify the stored file or memory and retry identity, not just an HTTP allocation response. Confirm rejected requests cannot modify another owner's data. Verify the UI/device result when the environment permits; report any remaining access limitation explicitly.
 
 Run the root `AGENTS.md` checks for changed code. Review the touched flow for direct external calls, contradictory state, swallowed failures, unused branches, and unsolicited settings before declaring completion. Report the finding, the implemented correction, verification, and any remaining concrete blocker.
+
+### Auth release checklist
+
+Auth has three independently deployed pieces: mobile screens/deep links, the Python API, and Supabase Auth redirects/templates. Trace all three; passing mobile tests or seeing the route in `app/routes/auth.py` does not prove the active API has it.
+
+- Before release, compare `git rev-parse --short <intended-ref>` with `heroku releases --app trove --num 3`. Never use `heroku releases:info` or print Heroku config: release detail output may include the full config-var values.
+- After release, run `make auth-release-check`. Its invalid-body probes must return the expected structured 400 for sign-up, resend, and confirmation; a missing route often returns a plain 404 and the client may translate it to an unrelated generic not-found message.
+- Existing unit tests in `tests/test_supabase_auth.py` must continue to assert `redirect_to=trove://confirm-email` for both signup and resend. Confirm `trove` is the app scheme in `mobile/app.json` and is in Supabase's redirect allow list.
+- Check Supabase email templates for the Trove logo asset URL and required `{{ .ConfirmationURL }}` placeholder. Apply template edits through the Management API, preserve existing SMTP settings, and read back only the changed subject/template fields. Never print the full auth config or access token.
+- For real end-to-end verification, use a dedicated synthetic account and inbox; record whether delivery, provider verification, the app deep link, and subsequent sign-in each succeeded. Do not probe signup/resend with a real user's address.
+- Keep the layers explicit: provider adapter tests, API-to-provider integration tests, mobile request/link parsing tests, safe deployed contract probes, then a dedicated inbox/device end-to-end run. The first layers must not send email; only the isolated end-to-end run may do so.
+- Old links retain the redirect selected at their creation. After changing redirects, verify with a newly generated message and direct the user to resend rather than repeatedly retrying the stale URL.
