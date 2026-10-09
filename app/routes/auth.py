@@ -7,9 +7,9 @@ from starlette.responses import Response
 
 from app import supabase_auth
 from app.account_deletion import account_deletion_status, cancel_account_deletion, request_account_deletion
-from app.auth import Principal, require_account_deletion_auth
+from app.auth import Principal, require_account_deletion_auth, require_auth
 from app.errors import ApiError, ApiJSONResponse
-from app.schemas import PasswordAuthRequest, RefreshAuthRequest, parse_body
+from app.schemas import PasswordAuthRequest, PasswordResetRequest, PasswordUpdateRequest, RefreshAuthRequest, parse_body
 
 router = APIRouter(prefix="/auth")
 
@@ -21,6 +21,37 @@ async def sign_in(request: Request) -> ApiJSONResponse:
     )
     result = await supabase_auth.sign_in(str(payload.email), payload.password)
     return ApiJSONResponse(content=result)
+
+
+@router.post("/sign-up")
+async def sign_up(request: Request) -> ApiJSONResponse:
+    payload = await parse_body(
+        PasswordAuthRequest, request, "invalid_auth_request", "Enter a valid email and password."
+    )
+    result = await supabase_auth.sign_up(str(payload.email), payload.password)
+    return ApiJSONResponse(content=result)
+
+
+@router.post("/password-reset")
+async def request_password_reset(request: Request) -> ApiJSONResponse:
+    payload = await parse_body(
+        PasswordResetRequest, request, "invalid_auth_request", "Enter a valid email address."
+    )
+    await supabase_auth.request_password_reset(str(payload.email))
+    return ApiJSONResponse(content={"status": "reset_email_requested"})
+
+
+@router.put("/password")
+async def update_own_password(
+    request: Request, _principal: Principal = Depends(require_auth)
+) -> ApiJSONResponse:
+    payload = await parse_body(
+        PasswordUpdateRequest, request, "invalid_auth_request", "Enter a valid new password."
+    )
+    authorization = request.headers.get("authorization", "")
+    access_token = authorization.removeprefix("Bearer ").strip()
+    await supabase_auth.update_password(access_token, payload.password)
+    return ApiJSONResponse(content={"status": "password_updated"})
 
 
 @router.post("/refresh")

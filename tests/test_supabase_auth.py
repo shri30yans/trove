@@ -82,6 +82,56 @@ async def test_sign_in_does_not_expose_provider_error_details(monkeypatch: pytes
 
 
 @pytest.mark.asyncio
+async def test_sign_up_returns_session_when_email_confirmation_is_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests = _install_provider(
+        monkeypatch,
+        200,
+        {"access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 3600, "token_type": "bearer"},
+    )
+
+    result = await supabase_auth.sign_up("new@example.test", "synthetic-password")
+
+    assert result["status"] == "authenticated"
+    assert result["session"]["accessToken"] == "new-access"
+    assert requests[0].url.path == "/auth/v1/signup"
+    assert json.loads(requests[0].content) == {"email": "new@example.test", "password": "synthetic-password"}
+
+
+@pytest.mark.asyncio
+async def test_sign_up_reports_email_confirmation_when_provider_returns_no_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_provider(monkeypatch, 200, {"id": "new-user", "access_token": None, "refresh_token": None})
+
+    assert await supabase_auth.sign_up("new@example.test", "synthetic-password") == {
+        "status": "email_confirmation_required"
+    }
+
+
+@pytest.mark.asyncio
+async def test_password_reset_uses_the_trove_deep_link_and_does_not_inspect_account_existence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests = _install_provider(monkeypatch, 200, {})
+
+    await supabase_auth.request_password_reset("reader@example.test")
+
+    assert requests[0].url.path == "/auth/v1/recover"
+    assert requests[0].url.params["redirect_to"] == "trove://reset-password"
+    assert json.loads(requests[0].content) == {"email": "reader@example.test"}
+
+
+@pytest.mark.asyncio
+async def test_password_update_uses_recovery_access_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests = _install_provider(monkeypatch, 200, {"id": "user-id"})
+
+    await supabase_auth.update_password("recovery-access", "new-synthetic-password")
+
+    assert requests[0].method == "PUT"
+    assert requests[0].url.path == "/auth/v1/user"
+    assert requests[0].headers["authorization"] == "Bearer recovery-access"
+    assert json.loads(requests[0].content) == {"password": "new-synthetic-password"}
+
+
+@pytest.mark.asyncio
 async def test_refresh_rotates_the_supabase_session(monkeypatch: pytest.MonkeyPatch) -> None:
     requests = _install_provider(
         monkeypatch,

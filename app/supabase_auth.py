@@ -50,6 +50,8 @@ def _provider_error(response: httpx.Response, *, operation: str) -> ApiError:
         return ApiError(401, "invalid_credentials", "Email or password is incorrect.")
     if operation == "refresh" and response.status_code in (400, 401):
         return ApiError(401, "session_expired", "Your session has expired. Sign in again.")
+    if operation == "password_update" and response.status_code in (400, 422):
+        return ApiError(400, "password_update_rejected", "Choose a different password and try again.")
     if 400 <= response.status_code < 500:
         return ApiError(400, "auth_request_rejected", "Check your email and password, then try again.")
     return ApiError(503, "auth_unavailable", "The sign-in service is unavailable. Try again.")
@@ -87,6 +89,44 @@ async def sign_in(email: str, password: str) -> dict[str, Any]:
     if not response.is_success:
         raise _provider_error(response, operation="sign_in")
     return {"status": "authenticated", "session": _session(_json(response))}
+
+
+async def sign_up(email: str, password: str) -> dict[str, Any]:
+    """Create an email/password account; Supabase may require email confirmation first."""
+    response = await _post("signup", {"email": email, "password": password})
+    if not response.is_success:
+        raise _provider_error(response, operation="sign_up")
+    payload = _json(response)
+    if not isinstance(payload, dict):
+        raise ApiError(503, "auth_provider_error", "The sign-in service returned an invalid response.")
+    if payload.get("access_token") is None and payload.get("refresh_token") is None:
+        return {"status": "email_confirmation_required"}
+    return {"status": "authenticated", "session": _session(payload)}
+
+
+async def request_password_reset(email: str) -> None:
+    redirect_to = quote("trove://reset-password", safe="")
+    response = await _post(f"recover?redirect_to={redirect_to}", {"email": email})
+    if not response.is_success:
+        raise _provider_error(response, operation="password_reset")
+
+
+async def update_password(access_token: str, password: str) -> None:
+    try:
+        async with _client() as client:
+            response = await client.put(
+                _provider_url("user"),
+                headers=_headers(access_token),
+                json={"password": password},
+            )
+    except httpx.TimeoutException as error:
+        raise ApiError(503, "auth_unavailable", "The sign-in service took too long to respond. Try again.") from error
+    except httpx.HTTPError as error:
+        raise ApiError(503, "auth_unavailable", "The sign-in service is unavailable. Try again.") from error
+    if not response.is_success:
+        if response.status_code == 401:
+            raise ApiError(401, "password_reset_session_expired", "This password reset link has expired. Request a new one.")
+        raise _provider_error(response, operation="password_update")
 
 
 async def refresh(refresh_token: str) -> dict[str, Any]:

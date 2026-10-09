@@ -174,6 +174,16 @@ class PasswordAuthRequest(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class PasswordResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: EmailStr
+
+
+class PasswordUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    password: str = Field(min_length=6, max_length=256)
+
+
 class RefreshAuthRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     refresh_token: str = Field(min_length=1, max_length=4096)
