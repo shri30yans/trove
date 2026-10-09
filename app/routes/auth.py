@@ -34,7 +34,7 @@ async def confirm_email_landing(request: Request) -> Response:
     response = _TEMPLATES.TemplateResponse(request, "confirm_email.html", {"script_nonce": nonce})
     response.headers["Cache-Control"] = "no-store"
     response.headers["Content-Security-Policy"] = (
-        f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline'; "
+        f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline'; connect-src 'self'; "
         "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     )
     response.headers["Referrer-Policy"] = "no-referrer"
@@ -78,7 +78,10 @@ async def confirm_email(request: Request) -> ApiJSONResponse:
     payload = await parse_body(
         ConfirmEmailRequest, request, "invalid_auth_request", "This confirmation link is invalid. Request a new one."
     )
-    return ApiJSONResponse(content=await supabase_auth.confirm_email(payload.token_hash))
+    response = ApiJSONResponse(content=await supabase_auth.confirm_email(payload.token_hash))
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @router.post("/password-reset")

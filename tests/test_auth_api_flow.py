@@ -32,7 +32,7 @@ def auth_provider(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Request]:
         if request.url.path == "/auth/v1/resend":
             return httpx.Response(200, json={})
         if request.url.path == "/auth/v1/verify":
-            return httpx.Response(200, json={"id": "synthetic-user"})
+            return httpx.Response(200, json={"id": "synthetic-user", "access_token": "access", "refresh_token": "refresh", "expires_in": 3600, "token_type": "bearer"})
         return httpx.Response(404, json={"msg": "unexpected synthetic endpoint"})
 
     transport = httpx.MockTransport(respond)
@@ -58,18 +58,48 @@ async def test_signup_resend_and_confirmation_cross_the_http_and_provider_bounda
     assert resend.status_code == 200
     assert resend.json() == {"status": "confirmation_email_requested"}
     assert confirmed.status_code == 200
-    assert confirmed.json() == {"status": "email_confirmed"}
+    assert confirmed.headers["cache-control"] == "no-store"
+    assert confirmed.headers["pragma"] == "no-cache"
+    assert confirmed.json() == {
+        "status": "authenticated",
+        "session": {"accessToken": "access", "refreshToken": "refresh", "expiresIn": 3600, "tokenType": "Bearer"},
+    }
 
     assert [request.url.path for request in auth_provider] == [
         "/auth/v1/signup",
         "/auth/v1/resend",
         "/auth/v1/verify",
     ]
-    assert auth_provider[0].url.params["redirect_to"] == "trove://confirm-email"
-    assert auth_provider[1].url.params["redirect_to"] == "trove://confirm-email"
+    assert auth_provider[0].url.params["redirect_to"] == "http://localhost:4000/v1/auth/confirm-email"
+    assert auth_provider[1].url.params["redirect_to"] == "http://localhost:4000/v1/auth/confirm-email"
     assert json.loads(auth_provider[1].content) == {"type": "signup", "email": "reader@example.com"}
     assert json.loads(auth_provider[2].content) == {"type": "signup", "token_hash": "synthetic-token-hash"}
     assert "access_token" not in signup.text
+
+
+@pytest.mark.asyncio
+async def test_confirmation_landing_is_a_safe_browser_fallback() -> None:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://trove.test") as client:
+        response = await client.get("/v1/auth/confirm-email")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert "nonce-" in response.headers["content-security-policy"]
+    assert "Email confirmed" in response.text
+    assert "trove://confirm-email" in response.text
+    assert "access_token" in response.text
+    assert "refresh_token" in response.text
+
+
+def test_confirmation_email_template_targets_trove_and_keeps_provider_contract() -> None:
+    from pathlib import Path
+
+    template = (Path(__file__).parents[1] / "email-templates" / "confirmation.html").read_text()
+
+    assert '{{ .RedirectTo }}#token_hash={{ .TokenHash }}&amp;type=signup' in template
+    assert "{{ .ConfirmationURL }}" in template
 
 
 @pytest.mark.asyncio

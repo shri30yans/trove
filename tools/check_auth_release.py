@@ -92,6 +92,11 @@ def run_checks(base_url: str) -> list[str]:
             passed = passed and _error_code(result) == expected
         elif expected == "png":
             passed = passed and result.body.startswith(b"\x89PNG\r\n\x1a\n")
+        elif expected == "confirmation_landing":
+            body = result.body.decode("utf-8", errors="replace")
+            passed = passed and all(
+                phrase in body for phrase in ("Email confirmed", "Open Trove", "access_token", "refresh_token")
+            )
 
         print(f"{'PASS' if passed else 'FAIL'} {name}: HTTP {result.status} {result.content_type}")
         if not passed:
@@ -107,6 +112,14 @@ def run_checks(base_url: str) -> list[str]:
             "application/json",
             "invalid_auth_request",
         )
+    check(
+        "email confirmation browser fallback",
+        "GET",
+        "/v1/auth/confirm-email",
+        200,
+        "text/html",
+        "confirmation_landing",
+    )
     check("email logo asset", "GET", "/brand/trove.png", 200, "image/png", "png")
     return failures
 
