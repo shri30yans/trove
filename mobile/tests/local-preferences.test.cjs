@@ -24,23 +24,22 @@ function harness(initial = {}) {
   return { api, legacy, store, db, delay: () => { delayed = true; }, release: () => releaseRead() };
 }
 test('legacy preferences migrate to validated SQLite values', async () => {
-  const h = harness({ 'trove.setting.background-sync.v1': 'false', 'trove.default-capture-space.v1': id, 'trove.theme.v1': 'dark', 'trove.search.history.v1': '["Synthetic"]' });
+  const h = harness({ 'trove.setting.background-sync.v1': 'false', 'trove.default-capture-space.v1': id, 'trove.search.history.v1': '["Synthetic"]' });
   try {
     assert.equal(await h.api.automaticSyncPreference.read(), false);
     assert.equal(await h.api.defaultSpacePreference.read(), id);
-    assert.equal(await h.api.themePreference.read(), 'dark');
     assert.deepEqual(await h.api.searchHistoryPreference.read(), ['Synthetic']);
     assert.equal(h.legacy.size, 0);
   } finally { h.db.close(); }
 });
 test('a choice committed during migration wins over a late legacy read', async () => {
-  const h = harness({ 'trove.theme.v1': 'dark' });
+  const h = harness({ 'trove.search.history.v1': '["Synthetic"]' });
   try {
     h.delay();
-    const pending = h.api.themePreference.read();
-    h.api.themePreference.write('light');
+    const pending = h.api.searchHistoryPreference.read();
+    h.api.searchHistoryPreference.write(['Kept']);
     h.release();
-    assert.equal(await pending, 'light');
+    assert.deepEqual(await pending, ['Kept']);
   } finally { h.db.close(); }
 });
 test('clearing a destination cannot resurrect a stale legacy selection', async () => {
@@ -57,12 +56,28 @@ test('corrupt history stays intact and is surfaced instead of being replaced', a
   } finally { h.db.close(); }
 });
 test('unknown theme identifiers and malformed sync flags fail validation', async () => {
-  const h = harness({ 'trove.theme.v1': '__proto__', 'trove.setting.background-sync.v1': 'maybe' });
+  const h = harness({ 'trove.setting.background-sync.v1': 'maybe' });
   try {
+    h.store.setItemSync('trove.theme.v1', '"__proto__"');
     await assert.rejects(h.api.themePreference.read(), /invalid/);
     await assert.rejects(h.api.automaticSyncPreference.read(), /invalid/);
     assert.throws(() => h.api.defaultSpacePreference.write('not-a-uuid'), /invalid/);
   } finally { h.db.close(); }
+});
+test('an unset theme follows the phone while an explicit choice stays pinned', async () => {
+  const fresh = harness();
+  try { assert.equal(await fresh.api.themePreference.read(), null); } finally { fresh.db.close(); }
+  const chosen = harness();
+  try {
+    chosen.store.setItemSync('trove.theme.v1', JSON.stringify('slate'));
+    assert.equal(await chosen.api.themePreference.read(), 'slate');
+  } finally { chosen.db.close(); }
+  const explicitLight = harness();
+  try {
+    await explicitLight.api.themePreference.read();
+    explicitLight.api.themePreference.write('light');
+    assert.equal(await explicitLight.api.themePreference.read(), 'light');
+  } finally { explicitLight.db.close(); }
 });
 
 test('consecutive history updates derive from the durable value and cannot lose a submission', async () => {

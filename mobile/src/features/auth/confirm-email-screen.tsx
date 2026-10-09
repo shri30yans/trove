@@ -2,53 +2,51 @@ import { useEffect, useMemo, useState } from 'react';
 import { router } from 'expo-router';
 import * as Linking from 'expo-linking';
 import { StyleSheet, Text, View } from 'react-native';
-import { Button, FormScreen, Notice, TextField } from '../../components';
-import { confirmEmailWithToken } from '../../api/client';
+import { Button, FormScreen, Notice, TextField, Wordmark } from '../../components';
+import { parseConfirmationLink } from './confirmation-link';
 import { useAuth } from '../../providers/auth-provider';
 import { useThemedStyles } from '../../providers/theme-provider';
 import { spacing, text, type Palette } from '../../theme';
 
-type ConfirmState = 'checking' | 'confirmed' | 'failed';
-
-function tokenHashFromUrl(url: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-  const fromQuery = parsed.searchParams.get('token_hash') ?? parsed.searchParams.get('token');
-  if (fromQuery) return fromQuery;
-  const fragment = new URLSearchParams(parsed.hash.replace(/^#/, ''));
-  return fragment.get('token_hash') ?? fragment.get('token');
-}
+type VerificationResult =
+  | { url: string; status: 'confirmed' | 'authenticated' }
+  | { url: string; status: 'failed'; message: string };
 
 export function ConfirmEmailScreen() {
   const url = Linking.useURL();
-  const tokenHash = useMemo(() => (url ? tokenHashFromUrl(url) : null), [url]);
-  const { resendConfirmation } = useAuth();
+  const confirmationLink = useMemo(() => (url ? parseConfirmationLink(url) : null), [url]);
+  const { acceptEmailConfirmation, confirmEmailWithToken, resendConfirmation } = useAuth();
   const styles = useThemedStyles(makeStyles);
-  // No token in the deep link means Supabase already verified it server-side
-  // before redirecting here, so the link is confirmed without another call.
-  const [state, setState] = useState<ConfirmState>('checking');
+  // Supabase verifies ConfirmationURL links before redirecting here. Session fragments are
+  // validated and persisted by the auth owner; token hashes are exchanged through the Trove API.
+  const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [resending, setResending] = useState(false);
   const [resent, setResent] = useState(false);
 
   useEffect(() => {
-    if (!tokenHash) return;
+    if (!url || (confirmationLink?.kind !== 'token' && confirmationLink?.kind !== 'session')) return;
     let active = true;
-    void confirmEmailWithToken(tokenHash).then(() => {
-      if (active) setState('confirmed');
+    const complete = confirmationLink.kind === 'session'
+      ? acceptEmailConfirmation(confirmationLink)
+      : confirmEmailWithToken(confirmationLink.tokenHash);
+    void complete.then((result) => {
+      if (active) setVerificationResult({
+        url,
+        status: result === 'email_confirmed' ? 'confirmed' : 'authenticated',
+      });
     }).catch((error: unknown) => {
       if (active) {
-        setMessage(error instanceof Error ? error.message : 'This confirmation link is invalid. Request a new one below.');
-        setState('failed');
+        setVerificationResult({
+          url,
+          status: 'failed',
+          message: error instanceof Error ? error.message : 'This confirmation link is invalid. Request a new one below.',
+        });
       }
     });
     return () => { active = false; };
-  }, [tokenHash]);
+  }, [acceptEmailConfirmation, confirmationLink, confirmEmailWithToken, url]);
 
   async function resend() {
     setMessage(null);
@@ -68,12 +66,20 @@ export function ConfirmEmailScreen() {
     }
   }
 
-  const confirmed = state === 'confirmed' || !tokenHash;
+  const resultForCurrentUrl = url && verificationResult?.url === url ? verificationResult : null;
+  const authenticated = resultForCurrentUrl?.status === 'authenticated';
+  const confirmed = confirmationLink?.kind === 'confirmed' || resultForCurrentUrl?.status === 'confirmed' || authenticated;
+  const failed = confirmationLink?.kind === 'failed' || resultForCurrentUrl?.status === 'failed';
+  const confirmationMessage = confirmationLink?.kind === 'failed'
+    ? confirmationLink.message
+    : resultForCurrentUrl?.status === 'failed' ? resultForCurrentUrl.message : null;
+  const checking = (confirmationLink?.kind === 'token' || confirmationLink?.kind === 'session')
+    && resultForCurrentUrl === null;
 
   if (!url) {
     return <FormScreen contentContainerStyle={styles.content}>
       <View style={styles.heading}>
-        <Text style={styles.brand}>Trove</Text>
+        <Wordmark />
         <Text style={styles.title}>Confirm your email</Text>
       </View>
       <Notice body="Open the confirmation link from your email to finish setting up your account." tone="info" />
@@ -83,17 +89,18 @@ export function ConfirmEmailScreen() {
 
   return <FormScreen contentContainerStyle={styles.content}>
     <View style={styles.heading}>
-      <Text style={styles.brand}>Trove</Text>
+      <Wordmark />
       <Text style={styles.title}>
-        {confirmed ? 'Email confirmed' : state === 'failed' ? 'Confirmation link expired' : 'Confirming your email'}
+        {authenticated ? 'You’re signed in' : confirmed ? 'Email confirmed' : failed ? 'Confirmation link unavailable' : 'Confirming your email'}
       </Text>
     </View>
-    {!confirmed && state === 'checking' && <Notice body="Checking your confirmation link…" tone="info" />}
+    {!confirmed && checking && <Notice body="Checking your confirmation link…" tone="info" />}
     {confirmed && <>
-      <Notice body="Your email is confirmed. Sign in with your password to start using Trove." tone="info" />
-      <Button label="Continue to sign in" fills size="large" onPress={() => router.replace('/')} />
+      <Notice body={authenticated ? 'Your email is confirmed and your account is ready.' : 'Your email is confirmed. Sign in with your password to start using Trove.'} tone="info" />
+      <Button label={authenticated ? 'Continue to Trove' : 'Continue to sign in'} fills size="large" onPress={() => router.replace('/')} />
     </>}
-    {state === 'failed' && !confirmed && <>
+    {failed && !confirmed && <>
+      {confirmationMessage && <Notice body={confirmationMessage} tone="danger" />}
       {message && <Notice body={message} tone="danger" />}
       {resent && <Notice body="New confirmation email sent. Check your inbox and spam folder." tone="info" />}
       <View style={styles.form}>
@@ -123,7 +130,6 @@ function makeStyles(colors: Palette) {
   return StyleSheet.create({
     content: { flexGrow: 1, justifyContent: 'center', gap: spacing.xxxxl, paddingHorizontal: spacing.xxxxl, paddingVertical: spacing.xxxxl },
     heading: { gap: spacing.md },
-    brand: { color: colors.blueDeep, ...text.eyebrow, textTransform: 'uppercase' },
     title: { color: colors.foreground, ...text.page },
     form: { gap: spacing.lg },
   });

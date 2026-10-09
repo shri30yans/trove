@@ -16,8 +16,8 @@ export function ScreenFrame({ header, children, footer }: ScreenProps & { footer
 }
 
 /** Forms scroll their focused field into view; no second avoidance wrapper. */
-export function FormScreen({ header, children, contentContainerStyle }: ScreenProps & { contentContainerStyle?: StyleProp<ViewStyle> }) {
-  return <ScreenChrome header={header}>
+export function FormScreen({ header, children, contentContainerStyle, footer }: ScreenProps & { contentContainerStyle?: StyleProp<ViewStyle>; footer?: ReactNode }) {
+  return <ScreenChrome header={header} footer={footer}>
     <KeyboardAwareScrollView keyboardShouldPersistTaps="handled" bottomOffset={spacing.xxl} contentContainerStyle={contentContainerStyle} style={styles.viewport}>
       {children}
     </KeyboardAwareScrollView>

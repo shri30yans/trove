@@ -35,6 +35,10 @@ export function memoryDescription(memory: Memory) {
   return memory.reason || memory.description || memory.userNote || memory.matchExcerpt || memory.sourceUrl || 'Saved to your personal memory.';
 }
 
+export function memoryCountLabel(count: number) {
+  return `${count} ${count === 1 ? 'memory' : 'memories'}`;
+}
+
 export function shortDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';

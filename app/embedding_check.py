@@ -13,20 +13,8 @@ from app.embedding import EmbeddingError, embeddings
 
 
 async def _check() -> int:
-    config = get_config()
-    missing = [
-        name
-        for name, configured in (
-            (
-                "VERTEX_SERVICE_ACCOUNT_JSON_B64 or GOOGLE_APPLICATION_CREDENTIALS",
-                (config.VERTEX_SERVICE_ACCOUNT_JSON_B64 or config.GOOGLE_APPLICATION_CREDENTIALS),
-            ),
-            ("VERTEX_PROJECT_ID", config.VERTEX_PROJECT_ID),
-            ("VERTEX_LOCATION", config.VERTEX_LOCATION),
-        )
-        if not configured
-    ]
-    if missing:
+    if get_config().vertex is None:
+        missing = ["VERTEX_PROJECT_ID and VERTEX_SERVICE_ACCOUNT_JSON_B64"]
         sys.stdout.write(json.dumps({"status": "not_configured", "missing": missing}) + "\n")
         return 2
 

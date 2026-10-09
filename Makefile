@@ -1,4 +1,4 @@
-.PHONY: check lint types test migrate run mobile-check mobile-verify
+.PHONY: check lint types test migrate run mobile-check mobile-verify auth-release-check test-apk
 
 check: lint types test mobile-check
 
@@ -23,3 +23,15 @@ mobile-check:
 
 mobile-verify:
 	npm --prefix mobile run verify:ios
+
+# Safe post-deploy probe: malformed auth requests verify route contracts without sending email.
+auth-release-check:
+	.venv/bin/python tools/check_auth_release.py https://api.trove.zyphrlabs.com
+
+# Local test APK on the attached device. Always runs from the repo root, so
+# every path below is root-relative by construction. Requires the Android SDK
+# (ANDROID_HOME), Java 17+, and platform-tools (adb) on PATH.
+test-apk:
+	cd mobile && npx expo prebuild --platform android --no-install
+	cd mobile/android && ./gradlew assembleRelease
+	adb install -r mobile/android/app/build/outputs/apk/release/app-release.apk

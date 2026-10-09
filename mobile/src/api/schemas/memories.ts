@@ -23,10 +23,11 @@ export const memoryDetailSchema = memoryCardSchema.extend({
   pageText: nullableText,
   captureMetadata: z.record(z.string(), z.unknown()), occurredAt: timestampSchema.nullable(),
   createdAt: timestampSchema, updatedAt: timestampSchema,
-  spaces: z.array(memorySpaceSchema),
+  spaces: z.array(memorySpaceSchema), tags: z.array(z.string().min(1).max(40)),
   assets: z.array(assetSchema.refine((asset) => asset.url === `/v1/assets/${asset.id}/content`)),
 });
 export const memoryListResponseSchema = z.object({ memories: z.array(memoryListItemSchema), nextCursor: z.string().nullable() });
+export const memoryTagsResponseSchema = z.object({ tags: z.array(z.object({ tag: z.string().min(1).max(40), memoryCount: countSchema })) });
 export const processingSummarySchema = z.object({
   queued: countSchema, processing: countSchema, ready: countSchema, failed: countSchema, total: countSchema,
 });
@@ -35,7 +36,7 @@ export type ProcessingSummary = z.infer<typeof processingSummarySchema>;
 export const memoryResponseSchema = z.object({ memory: memoryDetailSchema });
 export const memoryPatchSchema = z.strictObject({
   title: z.string().trim().max(500).nullable().optional(), userNote: z.string().max(20000).nullable().optional(),
-  spaceIds: z.array(idSchema).optional(),
+  spaceIds: z.array(idSchema).optional(), tags: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
 }).refine((patch) => Object.keys(patch).length > 0);
 export type MemoryPatch = z.infer<typeof memoryPatchSchema>;
 export type RemoteMemory = z.infer<typeof memoryDetailSchema>;

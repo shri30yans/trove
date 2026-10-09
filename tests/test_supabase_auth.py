@@ -37,6 +37,13 @@ def _install_provider(monkeypatch: pytest.MonkeyPatch, status: int, payload: dic
     return requests
 
 
+def test_confirmation_redirect_uses_the_public_api_origin_without_mcp_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = synthetic_config(MCP_PUBLIC_URL="https://api.example.test/mcp/")
+    monkeypatch.setattr(supabase_auth, "get_config", lambda: config)
+
+    assert supabase_auth.confirmation_redirect_url() == "https://api.example.test/v1/auth/confirm-email"
+
+
 @pytest.mark.asyncio
 async def test_sign_in_proxies_credentials_and_returns_only_the_session(monkeypatch: pytest.MonkeyPatch) -> None:
     requests = _install_provider(
@@ -72,6 +79,20 @@ async def test_sign_in_does_not_expose_provider_error_details(monkeypatch: pytes
     assert raised.value.status_code == 401
     assert raised.value.code == "invalid_credentials"
     assert "secret provider detail" not in raised.value.message
+
+
+@pytest.mark.asyncio
+async def test_sign_in_reports_unconfirmed_email_distinctly_from_wrong_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_provider(monkeypatch, 400, {"error_code": "email_not_confirmed", "msg": "Email not confirmed"})
+
+    with pytest.raises(ApiError) as raised:
+        await supabase_auth.sign_in("user@example.test", "synthetic-password")
+
+    assert raised.value.status_code == 403
+    assert raised.value.code == "email_not_confirmed"
+    assert "confirm" in raised.value.message.lower()
 
 
 @pytest.mark.asyncio
@@ -137,7 +158,7 @@ async def test_sign_up_deep_links_confirmation_back_to_the_app(monkeypatch: pyte
     assert await supabase_auth.sign_up("new@example.test", "synthetic-password") == {
         "status": "email_confirmation_required"
     }
-    assert requests[0].url.params["redirect_to"] == "trove://confirm-email"
+    assert requests[0].url.params["redirect_to"] == "http://localhost:4000/v1/auth/confirm-email"
 
 
 @pytest.mark.asyncio
@@ -149,7 +170,7 @@ async def test_resend_confirmation_targets_the_signup_flow_with_the_app_deep_lin
     await supabase_auth.resend_confirmation("pending@example.test")
 
     assert requests[0].url.path == "/auth/v1/resend"
-    assert requests[0].url.params["redirect_to"] == "trove://confirm-email"
+    assert requests[0].url.params["redirect_to"] == "http://localhost:4000/v1/auth/confirm-email"
     assert json.loads(requests[0].content) == {"type": "signup", "email": "pending@example.test"}
 
 
@@ -186,6 +207,34 @@ async def test_confirm_email_verifies_the_signup_token_hash(monkeypatch: pytest.
 
     assert requests[0].url.path == "/auth/v1/verify"
     assert json.loads(requests[0].content) == {"type": "signup", "token_hash": "synthetic-token-hash"}
+
+
+@pytest.mark.asyncio
+async def test_confirm_email_returns_the_provider_session_when_supplied(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests = _install_provider(
+        monkeypatch,
+        200,
+        {
+            "id": "confirmed-user",
+            "access_token": "callback-access",
+            "refresh_token": "callback-refresh",
+            "expires_in": 3600,
+            "token_type": "bearer",
+        },
+    )
+
+    result = await supabase_auth.confirm_email("synthetic-token-hash")
+
+    assert result == {
+        "status": "authenticated",
+        "session": {
+            "accessToken": "callback-access",
+            "refreshToken": "callback-refresh",
+            "expiresIn": 3600,
+            "tokenType": "Bearer",
+        },
+    }
+    assert requests[0].url.path == "/auth/v1/verify"
 
 
 @pytest.mark.asyncio

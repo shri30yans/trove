@@ -74,7 +74,7 @@ export default function MonthRoute() {
       keyExtractor={(memory) => memory.id}
       renderItem={({ item }) => <MemoryRow memory={item} onPress={() => void openMemory(item)} />}
       ListHeaderComponent={<MonthlyOverviewScreen monthDate={monthDate} memories={memories} totalCount={totalCount} nextCursor={loading ? null : page.nextCursor} loading={loading} error={error} onOpenMemory={(memory) => void openMemory(memory)} />}
-      ListFooterComponent={<>{loadMoreError ? <Text style={styles.loadMoreError}>{loadMoreError}</Text> : null}{!error && page.nextCursor && <LoadMoreButton loading={loadingMore} label={`Load ${Math.max(0, (totalCount ?? memories.length) - memories.length)} more memories`} onPress={loadMore} />}</>}
+      ListFooterComponent={<>{loadMoreError ? <Text style={styles.loadMoreError}>{loadMoreError}</Text> : null}{!error && page.nextCursor && <LoadMoreButton loading={loadingMore} label={totalCount === undefined ? 'Load more memories' : `Load ${Math.max(0, totalCount - memories.length)} more`} onPress={loadMore} />}</>}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={colors.blueDeep} colors={[colors.blueDeep]} />}
     />
   </ScreenFrame>;

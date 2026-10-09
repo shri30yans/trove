@@ -20,6 +20,7 @@ export function normalizeConnectionMessage(message: string): string {
 export function apiFailureMessage(status: number, code?: string): string {
   switch (code) {
     case 'invalid_credentials': return 'Your account, password, or both were incorrect. Try again or create a new account.';
+    case 'email_not_confirmed': return 'This email address is not confirmed yet. Open the confirmation link in your inbox, then tap "I confirmed — sign in" again.';
     case 'invalid_auth_request': return 'Enter a valid email and password.';
     case 'auth_rate_limited': return 'Too many sign-in attempts. Wait a moment and try again.';
     case 'auth_email_unavailable': return 'Trove could not send your confirmation email. Try again in a few minutes.';

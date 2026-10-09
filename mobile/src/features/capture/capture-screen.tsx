@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { type ComponentProps, useState } from 'react';
 import {
   Alert, Image, Linking, Modal, Pressable,
   ScrollView, StyleSheet, Text, TextInput, View,
@@ -12,7 +12,7 @@ import { Button, IconBadge, IconButton, ScreenFrame, ScreenHeader, kindIcons } f
 import { VideoPlayer } from '../../components/video-player';
 import { useThemedStyles, useTheme } from '../../providers/theme-provider';
 import { useKeyboardOnScreenFocus } from '../../hooks/use-keyboard-on-screen-focus';
-import { control, layout, radii, spacing, text, type Palette } from '../../theme';
+import { control, layout, press, radii, shadow, spacing, text, type Palette } from '../../theme';
 import { detectCaptureUrl, isVideoUrl, kindFromMimeType } from '../../utils/capture';
 import { AttachmentChip } from './attachment-chip';
 import { CaptureSpaceSelector } from './capture-space-selector';
@@ -148,9 +148,9 @@ export function CaptureScreen({ onClose, onSave, spaceId, spaces }: { onClose: (
               </View>
               <IconButton icon="arrow-up-sharp" variant="tinted" selected={hasCaptureContent} disabled={!hasCaptureContent} loading={saving} onPress={() => void save()} accessibilityLabel="Save memory" />
           {attachmentMenuOpen && <View style={styles.captureAddTray}>
-            <Button label="Camera" icon="camera-outline" variant="secondary" onPress={() => void pickAttachment(chooseCamera)} />
-            <Button label="Photos and videos" icon="images-outline" variant="secondary" onPress={() => void pickAttachment(chooseMedia)} />
-            <Button label="Files" icon="document-outline" variant="secondary" onPress={() => void pickAttachment(chooseFile)} />
+            <AttachmentOption icon="camera-outline" label="Camera" disabled={saving} onPress={() => void pickAttachment(chooseCamera)} />
+            <AttachmentOption icon="images-outline" label="Photos" disabled={saving} onPress={() => void pickAttachment(chooseMedia)} />
+            <AttachmentOption icon="document-outline" label="Files" disabled={saving} onPress={() => void pickAttachment(chooseFile)} />
           </View>}
             </View>
         </View>
@@ -159,6 +159,14 @@ export function CaptureScreen({ onClose, onSave, spaceId, spaces }: { onClose: (
       <AttachmentPreview attachment={previewAttachment} onClose={() => setPreviewAttachment(null)} />
     </Modal>}
   </ScreenFrame>;
+}
+
+function AttachmentOption({ icon, label, disabled, onPress }: { icon: ComponentProps<typeof Ionicons>['name']; label: string; disabled: boolean; onPress: () => void }) {
+  const styles = useThemedStyles(makeStyles);
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled }} disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.addOption, pressed && press.rowPressed]}>
+    <IconBadge icon={icon} size="mark" style={styles.addOptionBadge} />
+    <Text style={styles.addOptionLabel}>{label}</Text>
+  </Pressable>;
 }
 
 function AttachmentPreview({ attachment, onClose }: { attachment: CaptureAttachment; onClose: () => void }) {
@@ -195,7 +203,10 @@ function makeStyles(colors: Palette) {
     captureAddButton: { width: control.default, height: control.default, alignItems: 'center', justifyContent: 'center', borderRadius: radii.pill, backgroundColor: 'transparent' },
     captureAddPressed: { opacity: 0.72 },
     captureAddDisabled: { opacity: 0.45 },
-    captureAddTray: { position: 'absolute', bottom: '100%', left: 0, marginBottom: spacing.md, gap: spacing.md, padding: spacing.lg, borderRadius: radii.sheet, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+    captureAddTray: { position: 'absolute', bottom: '100%', left: 0, marginBottom: spacing.md, gap: spacing.lg, padding: spacing.lg, borderRadius: radii.sheet, backgroundColor: colors.surface, ...shadow.float },
+    addOption: { minHeight: control.large, flexDirection: 'row', alignItems: 'center', gap: spacing.xl, paddingVertical: spacing.sm, paddingEnd: spacing.xxxl },
+    addOptionBadge: { borderRadius: radii.pill },
+    addOptionLabel: { color: colors.foreground, ...text.input },
     attachmentRail: { flexGrow: 0, flexShrink: 0 },
     attachmentGallery: { gap: spacing.md, paddingBottom: spacing.md },
     previewSafe: { flex: 1, backgroundColor: colors.night },

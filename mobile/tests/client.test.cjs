@@ -49,6 +49,12 @@ test('storage quota errors explain that the local save is kept', async () => {
   assert.match(apiFailureMessage(413, 'storage_quota_exceeded'), /kept on your device/i);
 });
 
+test('unconfirmed email points at the inbox link instead of blaming the password', async () => {
+  const load = createLoader();
+  const { apiFailureMessage } = load('src/api/messages.ts');
+  assert.match(apiFailureMessage(403, 'email_not_confirmed'), /not confirmed yet/i);
+});
+
 test('provider details never appear in API failure copy; status and code remain available', async () => {
   const h = harness(async () => ({ status: 503, ok: false, json: async () => ({ error: { code: 'storage_unavailable', message: 'Raw provider failure: secret diagnostic' } }) }));
   await assert.rejects(h.api.request('/v1/memories', responseSchema), (error) => {
@@ -89,6 +95,73 @@ test('Supabase credentials go only to the Trove auth API and the rotated session
   assert.equal(stored.accessToken, 'supabase-access');
   assert.equal(stored.refreshToken, 'supabase-refresh');
   assert.equal(h.values.has('trove.access-token.v1'), false);
+});
+
+test('account creation returns the email confirmation state without storing a session', async () => {
+  let sent;
+  const h = harness(async (url, init) => {
+    sent = { url, init };
+    return { status: 200, ok: true, json: async () => ({ status: 'email_confirmation_required' }) };
+  });
+
+  const result = await h.api.signUpWithPassword('new@example.test', 'synthetic-password');
+
+  assert.equal(result, 'email_confirmation_required');
+  assert.equal(sent.url, 'https://api.test/v1/auth/sign-up');
+  assert.deepEqual(JSON.parse(sent.init.body), { email: 'new@example.test', password: 'synthetic-password' });
+  assert.equal(JSON.parse(h.values.get('trove.auth-session.v1')).accessToken, 'test-token');
+});
+
+test('password reset request returns generic confirmation through the Trove API', async () => {
+  let sent;
+  const h = harness(async (url, init) => {
+    sent = { url, init };
+    return { status: 200, ok: true, json: async () => ({ status: 'reset_email_requested' }) };
+  });
+
+  const result = await h.api.requestPasswordReset(' reader@example.test ');
+
+  assert.deepEqual(result, { status: 'reset_email_requested' });
+  assert.equal(sent.url, 'https://api.test/v1/auth/password-reset');
+  assert.deepEqual(JSON.parse(sent.init.body), { email: 'reader@example.test' });
+});
+
+test('password recovery deep link stores only a validated recovery session', async () => {
+  const h = harness(async () => { throw new Error('no request should be made'); });
+
+  await h.api.acceptPasswordRecoveryUrl('trove://reset-password#access_token=recovery-access&refresh_token=recovery-refresh&expires_in=3600&token_type=bearer&type=recovery');
+
+  const stored = JSON.parse(h.values.get('trove.auth-session.v1'));
+  assert.equal(stored.accessToken, 'recovery-access');
+  assert.equal(stored.refreshToken, 'recovery-refresh');
+  await assert.rejects(h.api.acceptPasswordRecoveryUrl('trove://reset-password#access_token=token&type=signup'), /invalid/i);
+});
+
+test('email confirmation callback persists its validated session without a provider call', async () => {
+  const h = harness(async () => { throw new Error('no provider request should be made'); });
+
+  await h.api.acceptEmailConfirmationSession({
+    accessToken: 'confirmed-access',
+    refreshToken: 'confirmed-refresh',
+    expiresIn: 3600,
+    tokenType: 'Bearer',
+  });
+
+  const stored = JSON.parse(h.values.get('trove.auth-session.v1'));
+  assert.equal(stored.accessToken, 'confirmed-access');
+  assert.equal(stored.refreshToken, 'confirmed-refresh');
+  await assert.rejects(h.api.acceptEmailConfirmationSession({ accessToken: 'partial' }), /invalid response/i);
+});
+
+test('password updates enforce the configured six-character minimum before sending', async () => {
+  let requested = false;
+  const h = harness(async () => {
+    requested = true;
+    return { status: 200, ok: true, json: async () => ({ status: 'password_updated' }) };
+  });
+
+  await assert.rejects(h.api.updatePassword('12345'), /request details are invalid/i);
+  assert.equal(requested, false);
 });
 
 test('an old local-only session is cleared and cannot sign in automatically', async () => {

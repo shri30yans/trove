@@ -1,16 +1,18 @@
 import { useState } from 'react';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
-import { Button, FormScreen, Notice, TextField } from '../../components';
+import { Button, FormScreen, Notice, TextField, Wordmark } from '../../components';
 import { validateNewPassword } from '../../domain/password';
 import { useAuth } from '../../providers/auth-provider';
+import { stashPendingSignupCredentials } from './pending-signup-credentials';
 import { useThemedStyles } from '../../providers/theme-provider';
 import { spacing, text, type Palette } from '../../theme';
 
 export function SignInScreen({ restoreError }: { restoreError: string | null }) {
+  const params = useLocalSearchParams<{ email?: string; emailConfirmed?: string }>();
   const { signIn, signUp, requestPasswordReset } = useAuth();
   const styles = useThemedStyles(makeStyles);
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(() => typeof params.email === 'string' ? params.email : '');
   const [password, setPassword] = useState('');
   const [creatingAccount, setCreatingAccount] = useState(false);
   const [resettingPassword, setResettingPassword] = useState(false);
@@ -34,6 +36,7 @@ export function SignInScreen({ restoreError }: { restoreError: string | null }) 
       } else if (creatingAccount) {
         const result = await signUp(email, password);
         if (result === 'email_confirmation_required') {
+          stashPendingSignupCredentials(email, password);
           router.push({ pathname: '/verify-email', params: { email: email.trim() } });
         }
       } else {
@@ -48,10 +51,11 @@ export function SignInScreen({ restoreError }: { restoreError: string | null }) 
 
   return <FormScreen contentContainerStyle={styles.content}>
     <View style={styles.heading}>
-      <Text style={styles.brand}>Trove</Text>
+      <Wordmark />
       <Text style={styles.title}>{resettingPassword ? 'Reset your password' : creatingAccount ? 'Create your Trove account' : 'Sign in to Trove'}</Text>
     </View>
     {restoreError && <Notice body={restoreError} tone="danger" />}
+    {params.emailConfirmed === 'true' && <Notice body="Email confirmed. Sign in with your password to continue." tone="info" />}
     {message && <Notice body={message.body} tone={message.tone} />}
     <View style={styles.form}>
       <TextField
@@ -127,7 +131,6 @@ function makeStyles(colors: Palette) {
   return StyleSheet.create({
     content: { flexGrow: 1, justifyContent: 'center', gap: spacing.xxxxl, paddingHorizontal: spacing.xxxxl, paddingVertical: spacing.xxxxl },
     heading: { gap: spacing.md },
-    brand: { color: colors.blueDeep, ...text.eyebrow, textTransform: 'uppercase' },
     title: { color: colors.foreground, ...text.page },
     form: { gap: spacing.lg },
     links: { flexDirection: 'row', justifyContent: 'center', gap: spacing.lg },

@@ -10,7 +10,7 @@ from starlette.requests import Request
 
 from app.auth import Principal
 from app.errors import ApiError
-from app.routes import memories
+from app.routes import memory_lifecycle
 from app.schemas import MoveMemoryRequest
 
 USER = uuid.UUID("00000000-0000-4000-8000-000000000001")
@@ -42,13 +42,13 @@ def connection(monkeypatch):
     async def transaction():
         yield connection
 
-    monkeypatch.setattr(memories, "transaction", transaction)
-    monkeypatch.setattr(memories, "_get_memory", AsyncMock(return_value={"id": str(MEMORY)}))
+    monkeypatch.setattr(memory_lifecycle, "transaction", transaction)
+    monkeypatch.setattr(memory_lifecycle, "read_back", AsyncMock(return_value={"id": str(MEMORY)}))
     return connection
 
 
 async def move():
-    return await memories.move_memory(request(), str(MEMORY), Principal(id=str(USER), subject="synthetic"))
+    return await memory_lifecycle.move_memory(request(), str(MEMORY), Principal(id=str(USER), subject="synthetic"))
 
 
 async def test_move_locks_owned_memory_and_changes_only_selected_memberships(connection):

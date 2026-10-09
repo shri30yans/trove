@@ -25,8 +25,9 @@ from jwt.utils import base64url_encode
 from app import auth
 from app.config import Config
 from app.errors import ApiError
+from tests.config_fixture import COMPLETE_CONFIG, synthetic_config
 
-_ISSUER = "https://trove.example.test"
+_ISSUER = "https://trove.example.test/auth/v1"
 _AUDIENCE = "authenticated"
 
 _PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -43,19 +44,12 @@ _RSA_JWK: dict[str, Any] = {**json.loads(RSAAlgorithm.to_jwk(_PRIVATE_KEY.public
 
 def _config(**overrides: Any) -> Config:
     values: dict[str, Any] = {
-        "RUN_ENV": "local",
-        "DATABASE_URL": "postgresql://127.0.0.1:5432/trove_test",
-        "S3_ENDPOINT": "http://127.0.0.1:54321",
-        "S3_REGION": "local",
-        "S3_BUCKET": "trove-private",
-        "S3_ACCESS_KEY": "test",
-        "S3_SECRET_KEY": "test",
-        "AUTH_JWKS_URL": "https://trove.example.test/.well-known/jwks.json",
-        "AUTH_ISSUER": _ISSUER,
         "AUTH_AUDIENCE": _AUDIENCE,
+        "AUTH_ISSUER": _ISSUER,
+        **COMPLETE_CONFIG,
     }
     values.update(overrides)
-    return Config(**values)
+    return synthetic_config(**values)
 
 
 @pytest.fixture
@@ -85,7 +79,7 @@ class _FakeJwksClient:
 @pytest.fixture
 def jwks(monkeypatch, install_config):
     def use(key: dict[str, Any] | None = None, error: Exception | None = None) -> None:
-        install_config(AUTH_JWKS_URL="https://trove.example.test/.well-known/jwks.json")
+        install_config()
         client = _FakeJwksClient(key, error)
         monkeypatch.setattr(auth, "_jwks_client", lambda: client)
 
@@ -363,7 +357,7 @@ async def test_require_auth_reports_a_forged_token_as_401(jwks) -> None:
 
 def test_the_jwks_client_is_built_with_arguments_pyjwt_accepts(install_config) -> None:
     """PyJWKClient takes no `algorithms` keyword; building it must not raise TypeError."""
-    install_config(AUTH_JWKS_URL="https://trove.example.test/.well-known/jwks.json")
+    install_config()
     auth._jwks_client.cache_clear()
     try:
         assert isinstance(auth._jwks_client(), jwt.PyJWKClient)

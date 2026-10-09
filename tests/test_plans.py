@@ -7,7 +7,7 @@ import pytest
 from starlette.requests import Request
 
 from app.auth import Principal
-from app.domain.plans import FREE_PLAN, PAID_PLAN, get_storage_plan, storage_plan_payload
+from app.domain.plans import FREE_PLAN, PAID_PLAN, get_storage_plan
 from app.errors import ApiError
 from app.routes import accounts, uploads
 
@@ -15,19 +15,22 @@ USER_ID = "00000000-0000-4000-8000-000000000002"
 ASSET_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
 
 
-def test_plan_caps_and_storage_payload_are_server_owned():
+def test_plan_caps_are_server_owned():
     assert FREE_PLAN.limit_bytes == 200_000_000
     assert PAID_PLAN.limit_bytes == 1_000_000_000
-    assert storage_plan_payload("free", 25_000_000) == {
+    with pytest.raises(ValueError):
+        get_storage_plan("unlimited")
+
+
+def test_storage_usage_is_reported_without_a_negative_remainder():
+    assert accounts.Plan.from_usage(get_storage_plan("free"), 25_000_000).model_dump() == {
         "id": "free",
         "name": "Free",
         "storageLimitBytes": 200_000_000,
         "storageUsedBytes": 25_000_000,
         "storageRemainingBytes": 175_000_000,
     }
-    assert storage_plan_payload("paid", 1_100_000_000)["storageRemainingBytes"] == 0
-    with pytest.raises(ValueError):
-        get_storage_plan("unlimited")
+    assert accounts.Plan.from_usage(PAID_PLAN, 1_100_000_000).storageRemainingBytes == 0
 
 
 async def test_plan_endpoint_returns_owned_storage_usage(monkeypatch):

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { StyleSheet, Text } from 'react-native';
-import { Button, FormScreen, Notice } from '../../components';
+import { Button, FormScreen, Notice, Wordmark } from '../../components';
 import { useThemedStyles } from '../../providers/theme-provider';
 import { spacing, text, type Palette } from '../../theme';
 
@@ -24,7 +24,7 @@ export function AccountDeletionScreen({ deleteAfter, canCancel, onCancel, onChec
   }
 
   return <FormScreen contentContainerStyle={styles.content}>
-    <Text style={styles.brand}>Trove</Text>
+    <Wordmark />
     <Text style={styles.title}>Account deletion scheduled</Text>
     <Text style={styles.body}>{!canCancel
       ? 'Your deletion deadline has passed and Trove is finishing cleanup. Your account remains paused while this completes.'
@@ -39,7 +39,6 @@ export function AccountDeletionScreen({ deleteAfter, canCancel, onCancel, onChec
 function makeStyles(colors: Palette) {
   return StyleSheet.create({
     content: { flexGrow: 1, justifyContent: 'center', gap: spacing.xl, paddingHorizontal: spacing.xxxxl, paddingVertical: spacing.xxxxl },
-    brand: { color: colors.blueDeep, ...text.eyebrow, textTransform: 'uppercase' },
     title: { color: colors.foreground, ...text.page },
     body: { color: colors.muted, ...text.body },
   });

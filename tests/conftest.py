@@ -23,8 +23,15 @@ LOCAL_ENVIRONMENT = {
     "S3_BUCKET": "trove-private",
     "S3_ACCESS_KEY": "test",
     "S3_SECRET_KEY": "test",
+    "MAX_UPLOAD_BYTES": "52428800",
+    "CORS_ORIGIN": "http://localhost:8081",
+    "PROXY_TRUSTED_IPS": "*",
+    "SUPABASE_URL": "https://auth.example.test",
+    "SUPABASE_AUTH_API_KEY": "publishable-test-key",
+    "SUPABASE_SECRET_KEY": "server-only-test-key",
     "AUTH_JWKS_URL": "https://auth.example.test/.well-known/jwks.json",
     "AUTH_ISSUER": "https://auth.example.test",
+    "MCP_PUBLIC_URL": "http://localhost:4000/mcp",
 }
 
 for name, value in LOCAL_ENVIRONMENT.items():

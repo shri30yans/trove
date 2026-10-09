@@ -4,7 +4,7 @@ import { kindIcons, kindLabels, memoryDescription, memoryTitle, shortDate } from
 import { DecorativeOrb } from './decorative-orb';
 import { Tag } from './tag';
 import { useThemedStyles, useTheme } from '../providers/theme-provider';
-import { fonts, layout, press, radii, spacing, text } from '../theme';
+import { fonts, glass, layout, press, radii, spacing, text } from '../theme';
 import type { Palette } from '../theme';
 import type { Memory } from '../types';
 
@@ -20,7 +20,7 @@ export function MemoryCard({ memory, onPress }: { memory: Memory; onPress: () =>
       {preview
         ? <MemoryImage uri={preview} style={styles.artwork} resizeMode="cover" />
         : <View style={[styles.artwork, styles.artworkEmpty, { backgroundColor: tint }]}>
-          <DecorativeOrb seed={`memory-${memory.id}`} size={120} color="rgba(255,255,255,0.24)" />
+          <DecorativeOrb seed={`memory-${memory.id}`} size={120} color={glass.veil} />
           <Tag size="micro" label={kindLabels[memory.kind]} icon={kindIcons[memory.kind]} tone="glass" />
           <Text numberOfLines={3} style={styles.excerpt}>{excerpt}</Text>
         </View>}

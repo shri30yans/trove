@@ -26,3 +26,7 @@ coverage/
 *.dylib
 *.dll
 *.class
+
+# Local release artifacts
+artifacts/
+.secrets/

@@ -37,6 +37,7 @@ export function IconButton({ icon, onPress, accessibilityLabel, variant = 'outli
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled: busy, selected, expanded }}
       hitSlop={variant === 'plain' ? spacing.md : undefined}
+      android_ripple={null} // kills the platform focus rim, which lingers after a tap; `press.pressed` is the feedback
       style={({ pressed }) => [
         styles.base,
         size === 'large' && styles.large,

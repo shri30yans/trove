@@ -9,7 +9,10 @@ export const signUpResponseSchema = z.discriminatedUnion('status', [
 ]);
 export const passwordResetResponseSchema = z.object({ status: z.literal('reset_email_requested') });
 export const resendConfirmationResponseSchema = z.object({ status: z.literal('confirmation_email_requested') });
-export const confirmEmailResponseSchema = z.object({ status: z.literal('email_confirmed') });
+export const confirmEmailResponseSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('email_confirmed') }),
+  signedInResponseSchema,
+]);
 export const passwordUpdateResponseSchema = z.object({ status: z.literal('password_updated') });
 export const accountDeletionRequestSchema = z.object({ requestedAt: z.string().datetime(), deleteAfter: z.string().datetime(), deletionCancellable: z.boolean() });
 export const accountDeletionStatusSchema = z.object({ deletionScheduled: z.boolean(), deleteAfter: z.string().datetime().nullable(), deletionComplete: z.boolean(), deletionCancellable: z.boolean() });

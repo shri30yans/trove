@@ -9,6 +9,7 @@ import uuid
 from typing import Any
 
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 
 def iso_milliseconds(value: Any) -> str:
@@ -21,6 +22,10 @@ def iso_milliseconds(value: Any) -> str:
 
 
 def json_default(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        # Responses are built from the typed read models in app.serialize. Python mode hands back this
+        # encoder's own types, so a model never decides the API's timestamp or identifier spelling.
+        return value.model_dump(mode="python")
     if isinstance(value, dt.datetime):
         return iso_milliseconds(value)
     if isinstance(value, dt.date):
@@ -46,7 +51,11 @@ class ApiJSONResponse(JSONResponse):
 
 
 def respond(content: object, status_code: int = 200) -> ApiJSONResponse:
-    """Return a payload with the shared JSON encoding (UUIDs and ISO-Z timestamps)."""
+    """Return a payload with the shared JSON encoding (UUIDs and ISO-Z timestamps).
+
+    A typed response model may appear anywhere in the payload, including nested, and is encoded the
+    same way as the plain dict it sits beside.
+    """
     return ApiJSONResponse(content=content, status_code=status_code)
 
 

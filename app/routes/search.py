@@ -6,7 +6,7 @@ import logging
 import time
 import uuid
 from collections.abc import Mapping
-from typing import Any
+from typing import Self
 
 from fastapi import APIRouter, Depends, Request
 
@@ -19,6 +19,8 @@ from app.domain.retrieval import (
     SEARCH_DEFAULT_LIMIT,
     SEARCH_MAX_LIMIT,
     SEARCH_MIN_LIMIT,
+    MatchType,
+    RelationKind,
     match_type,
     parse_limit,
     relation_for,
@@ -27,15 +29,64 @@ from app.embedding import Embedding, EmbeddingError, embeddings
 from app.errors import ApiError, ApiJSONResponse, respond
 from app.queries import PREVIEW_KEY_SUBQUERY
 from app.schemas import RelatedFeedbackRequest, parse_body, parse_kind_param
-from app.serialize import memory_card
+from app.serialize import MemoryCard, Row, WireModel, preview_url
 from app.times import parse_timestamp
 from app.vector_search import find_related_memories, find_semantic_memories
 
 router = APIRouter(dependencies=[Depends(require_auth)])
 logger = logging.getLogger("trove.api")
-_MEMORY_SPACES = """COALESCE((SELECT json_agg(json_build_object('id',s.id,'name',s.name,'color',s.color,'icon',s.icon)
-    ORDER BY s.name) FROM memory_spaces ms JOIN spaces s ON s.id=ms.space_id AND s.deleted_at IS NULL
-    WHERE ms.memory_id=m.id AND ms.user_id=m.user_id), '[]'::json) AS spaces"""
+
+
+class SearchMemory(MemoryCard):
+    """One ranked hit: the card, the text that matched, and how it was found."""
+
+    description: str | None
+    userNote: str | None
+    pageText: str | None
+    score: float
+    matchType: MatchType
+    matchExcerpt: str | None
+    previewUrl: str | None
+
+    @classmethod
+    def from_row(cls, row: Row) -> Self:
+        return cls(
+            **MemoryCard.from_row(row).model_dump(),
+            description=row["description"],
+            userNote=row["user_note"],
+            pageText=row["page_text"],
+            score=float(row["score"]),
+            matchType=match_type(float(row["lexical_score"] or 0), float(row["semantic_score"] or 0)),
+            matchExcerpt=row["match_excerpt"],
+            previewUrl=preview_url(row["id"], row["preview_key"]),
+        )
+
+
+class SearchResults(WireModel):
+    query: str
+    semanticSearch: bool
+    memories: list[SearchMemory]
+
+
+class RelatedMemory(MemoryCard):
+    """One Memory beside this one, with the reason the two are shown together."""
+
+    similarity: float
+    relation: RelationKind
+    reason: str
+    previewUrl: str | None
+
+    @classmethod
+    def from_row(cls, row: Row) -> Self:
+        similarity = float(row["similarity"])
+        relation, reason = relation_for(similarity)
+        return cls(
+            **MemoryCard.from_row(row).model_dump(),
+            similarity=similarity,
+            relation=relation,
+            reason=reason,
+            previewUrl=preview_url(row["id"], row["preview_key"]),
+        )
 
 
 async def _embeddings_enabled_for_user(user_id: uuid.UUID) -> bool:
@@ -60,10 +111,11 @@ async def search(request: Request, principal: Principal = Depends(require_auth))
     return respond(await search_memories_for_user(principal, request.query_params))
 
 
-async def search_memories_for_user(principal: Principal, query: Mapping[str, str]) -> dict[str, Any]:
+async def search_memories_for_user(principal: Principal, query: Mapping[str, str]) -> SearchResults:
     """Search one caller's memories using plain query values, shared by HTTP and MCP."""
     term = (query.get("q") or "").strip()
-    if not term or len(term) > 1000:
+    tag = (query.get("tag") or "").strip().lower() or None
+    if (not term and not tag) or len(term) > 1000:
         raise ApiError(400, "invalid_query", "Enter a search phrase up to 1,000 characters.")
     kind = parse_kind_param(query.get("kind"))
     limit = parse_limit(
@@ -73,8 +125,17 @@ async def search_memories_for_user(principal: Principal, query: Mapping[str, str
     before = parse_timestamp(query.get("before")) if query.get("before") else None
     user_id = uuid.UUID(principal.id)
     space_id = query.get("spaceId")
+    if tag is not None and len(tag) > 40:
+        raise ApiError(400, "invalid_tag", "Tags must be 40 characters or fewer.")
+    mode = query.get("mode", "hybrid")
+    if mode not in {"hybrid", "raw"}:
+        raise ApiError(400, "invalid_search_mode", "Choose hybrid or raw text search.")
 
-    embedding = await _embed_search_query(term, await _embeddings_enabled_for_user(user_id))
+    embedding = (
+        (await _embed_search_query(term, await _embeddings_enabled_for_user(user_id)) if mode == "hybrid" else None)
+        if term
+        else None
+    )
     semantic = (
         await find_semantic_memories(
             principal.id,
@@ -108,6 +169,7 @@ async def search_memories_for_user(principal: Principal, query: Mapping[str, str
           AND ($7::text IS NULL OR m.source_domain=$7)
           AND ($8::timestamptz IS NULL OR m.captured_at >= $8::timestamptz)
           AND ($9::timestamptz IS NULL OR m.captured_at < $9::timestamptz)
+          AND ($10::text IS NULL OR EXISTS (SELECT 1 FROM memory_tags mt WHERE mt.memory_id=m.id AND mt.user_id=m.user_id AND mt.tag=$10))
           AND (m.search_document @@ q.terms OR sh.memory_id IS NOT NULL)
       ), scored AS (
         SELECT *,
@@ -116,7 +178,7 @@ async def search_memories_for_user(principal: Principal, query: Mapping[str, str
         FROM ranked
       ), limited AS (
         SELECT *, coalesce(1.0 / lexical_rank, 0) + coalesce(1.0 / semantic_rank, 0) AS score
-        FROM scored ORDER BY score DESC, captured_at DESC LIMIT $10
+        FROM scored ORDER BY score DESC, captured_at DESC LIMIT $11
       )
       SELECT limited.*,
         CASE WHEN limited.search_document @@ q.terms THEN
@@ -133,22 +195,12 @@ async def search_memories_for_user(principal: Principal, query: Mapping[str, str
         query.get("source"),
         after,
         before,
+        tag,
         limit,
     )
-    memories = [
-        {
-            **memory_card(row),
-            "description": row["description"],
-            "userNote": row["user_note"],
-            "pageText": row["page_text"],
-            "score": float(row["score"]),
-            "matchType": match_type(float(row["lexical_score"] or 0), float(row["semantic_score"] or 0)),
-            "matchExcerpt": row["match_excerpt"],
-            "previewUrl": f"/v1/memories/{row['id']}/preview" if row["preview_key"] else None,
-        }
-        for row in rows
-    ]
-    return {"query": term, "semanticSearch": embedding is not None, "memories": memories}
+    return SearchResults(
+        query=term, semanticSearch=embedding is not None, memories=[SearchMemory.from_row(row) for row in rows]
+    )
 
 
 @router.get("/memories/{memory_id}/related")
@@ -183,43 +235,31 @@ async def related_memories(memory_id: str, principal: Principal = Depends(requir
         (time.perf_counter() - vector_started) * 1000,
         len(similar),
     )
+    if not similar:
+        logger.info("memory_related outcome=no_candidates elapsed_ms=%.1f", (time.perf_counter() - started) * 1000)
+        return respond({"memories": []})
+
     hydrate_started = time.perf_counter()
-    if similar:
-        rows = await fetch(
-            f"""WITH candidates AS (
-                 SELECT * FROM unnest($3::uuid[],$4::float8[]) AS hit(memory_id,similarity)
-               )
-               SELECT m.id, m.kind, m.status, m.source_app, m.source_url, m.source_domain, m.title,
-                 m.captured_at,c.similarity,
-                 {_MEMORY_SPACES},
-                 {PREVIEW_KEY_SUBQUERY}
-               FROM candidates c JOIN memories m ON m.id=c.memory_id
-               WHERE m.user_id=$1 AND m.deleted_at IS NULL AND c.similarity>=$5::float
-                 AND NOT EXISTS (SELECT 1 FROM memory_relation_feedback f WHERE f.user_id=$1 AND f.memory_id=$2
-                   AND f.related_memory_id=m.id AND f.is_related=false)
-               ORDER BY c.similarity DESC LIMIT $6""",
-            user_id,
-            target,
-            [uuid.UUID(str(item["memoryId"])) for item in similar],
-            [float(item["similarity"]) for item in similar],
-            RELATED_MIN_SIMILARITY,
-            RELATED_PAGE_SIZE,
-        )
-    else:
-        rows = []
-    memories = []
-    for row in rows:
-        similarity = float(row["similarity"] or 0)
-        relation, reason = relation_for(similarity)
-        memories.append(
-            {
-                **memory_card(row),
-                "similarity": similarity,
-                "relation": relation,
-                "reason": reason,
-                "previewUrl": f"/v1/memories/{row['id']}/preview" if row["preview_key"] else None,
-            }
-        )
+    rows = await fetch(
+        f"""WITH candidates AS (
+             SELECT * FROM unnest($3::uuid[],$4::float8[]) AS hit(memory_id,similarity)
+           )
+           SELECT m.id, m.kind, m.status, m.source_app, m.source_url, m.source_domain, m.title,
+             m.captured_at,c.similarity,
+             {PREVIEW_KEY_SUBQUERY}
+           FROM candidates c JOIN memories m ON m.id=c.memory_id
+           WHERE m.user_id=$1 AND m.deleted_at IS NULL AND c.similarity>=$5::float
+             AND NOT EXISTS (SELECT 1 FROM memory_relation_feedback f WHERE f.user_id=$1 AND f.memory_id=$2
+               AND f.related_memory_id=m.id AND f.is_related=false)
+           ORDER BY c.similarity DESC LIMIT $6""",
+        user_id,
+        target,
+        [uuid.UUID(str(item["memoryId"])) for item in similar],
+        [float(item["similarity"]) for item in similar],
+        RELATED_MIN_SIMILARITY,
+        RELATED_PAGE_SIZE,
+    )
+    memories = [RelatedMemory.from_row(row) for row in rows]
     logger.info("memory_related stage=hydrate elapsed_ms=%.1f", (time.perf_counter() - hydrate_started) * 1000)
     logger.info("memory_related outcome=success elapsed_ms=%.1f", (time.perf_counter() - started) * 1000)
     return respond({"memories": memories})

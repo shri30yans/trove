@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useWorkspaceActions, useWorkspaceData } from '../../providers/workspace-provider';
 import { useTrovePreferences } from '../../providers/preferences-provider';
@@ -9,6 +10,7 @@ import { ActionSheet, Button, CreateFab, IconButton, LoadMoreButton, MemoryTypeP
 import type { MemoryTypeFilter } from '../../components';
 import { MemoryGrid } from '../../components/memory-grid';
 import { useMoveMemories } from '../../features/spaces/use-move-memories';
+import { memoryCountLabel } from '../../utils/memory-metadata';
 import { useGoBack } from '../../hooks/use-go-back';
 import { useThemedStyles, useTheme } from '../../providers/theme-provider';
 import { layout, radii, spacing, text } from '../../theme';
@@ -65,19 +67,18 @@ function SpaceDetailScreen({ id }: { id: string }) {
     setSelectedIds(new Set(targets.filter((memory) => !movedIds.has(memory.id)).map((memory) => memory.id)));
     if (movedIds.size === targets.length) setSelectionMode(false);
     setMoveMenuOpen(false);
-    if (movedIds.size) showToast(`${movedIds.size} ${movedIds.size === 1 ? 'memory' : 'memories'} moved to ${targetSpaceName}`);
-    if (movedIds.size < targets.length) showToast(`${targets.length - movedIds.size} ${targets.length - movedIds.size === 1 ? 'memory' : 'memories'} could not be moved.`);
+    if (movedIds.size) showToast(`${memoryCountLabel(movedIds.size)} moved to ${targetSpaceName}`);
+    if (movedIds.size < targets.length) showToast(`${memoryCountLabel(targets.length - movedIds.size)} could not be moved.`);
     if (result.refreshRequired) showToast('Memories moved. Refresh your library to update the display.');
     void loadWorkspace(true).catch(() => showToast('Memories moved. Refresh your library to update its counts.'));
   }, [id, loadWorkspace, memories, selectedIds, showToast, moveBatch, moving]);
 
   const title = space?.name || 'Space';
-  const memoryCount = space?.memoryCount ?? memories.length;
   const moveTargets = spaces.filter((item) => item.id !== id);
 
   return <ScreenFrame header={<ScreenHeader
         title={title}
-        subtitle={`${memoryCount} ${memoryCount === 1 ? 'memory' : 'memories'} · Newest first`}
+        subtitle={space ? `${memoryCountLabel(space.memoryCount)} · Newest first` : undefined}
         onBack={goBack}
         actions={<>
           <IconButton icon={selectionMode ? 'checkbox' : 'checkbox-outline'} onPress={() => { setSelectionMode((current) => !current); setSelectedIds(new Set()); }} accessibilityLabel={selectionMode ? 'Exit selection' : 'Select memories'} />
@@ -97,11 +98,11 @@ function SpaceDetailScreen({ id }: { id: string }) {
       selectionMode={selectionMode}
       selectedIds={selectedIds}
       onToggleSelect={toggleSelection}
-      listHeader={space?.description ? <Text style={styles.description}>{space.description}</Text> : null}
+      listHeader={space ? <SpaceIdentity name={space.name} description={space.description} count={space.memoryCount} /> : null}
       listFooter={<>{hasMore && <LoadMoreButton loading={loadingMore} onPress={() => void loadMore()} />}{loadMoreError && <Text style={styles.loadMoreError}>{loadMoreError}</Text>}</>}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load()} tintColor={colors.blueDeep} />}
     /> : <ScrollView style={styles.scroll} contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load()} tintColor={colors.blueDeep} />}>
-      {space?.description ? <Text style={styles.description}>{space.description}</Text> : null}
+      {space && <SpaceIdentity name={space.name} description={space.description} count={space.memoryCount} />}
       {loading ? <StatePanel body="Gathering memories…" loading bare />
         : error ? <StatePanel body={error} icon="cloud-offline-outline" action="Try again" onAction={() => void load()} bare />
           : <><StatePanel title={filter === 'all' ? 'Nothing in this Space yet' : `No ${filterLabels[filter].toLowerCase()} yet`} body={hasMore ? 'More memories may match this filter.' : 'Add a memory here or move one in from its details.'} icon="albums-outline" bare />{hasMore && <LoadMoreButton loading={loadingMore} onPress={() => void loadMore()} />}{loadMoreError && <Text style={styles.loadMoreError}>{loadMoreError}</Text>}</>}
@@ -113,9 +114,24 @@ function SpaceDetailScreen({ id }: { id: string }) {
   </ScreenFrame>;
 }
 
+function SpaceIdentity({ name, description, count }: { name: string; description: string | null; count: number }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  return <View style={styles.identity}>
+    <View style={styles.identityIcon}><Ionicons name="folder" size={27} color={colors.foreground} /></View>
+    <Text style={styles.identityTitle}>{name}</Text>
+    <Text style={styles.identityMeta}>{memoryCountLabel(count)} · Newest first</Text>
+    {!!description && <Text style={styles.description}>{description}</Text>}
+  </View>;
+}
+
 function makeStyles(colors: Palette) {
   return StyleSheet.create({
-    description: { color: colors.muted, ...text.subtitle, marginBottom: spacing.xl },
+    identity: { paddingTop: spacing.xxl, paddingBottom: spacing.xxxl },
+    identityIcon: { width: 54, height: 54, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.xxl, borderRadius: radii.lg, backgroundColor: colors.icyBlue },
+    identityTitle: { color: colors.foreground, ...text.hero, fontWeight: '600' },
+    identityMeta: { marginTop: spacing.sm, color: colors.muted, ...text.subtitle },
+    description: { color: colors.secondary, ...text.reading, marginTop: spacing.xl },
     fabHost: { alignItems: 'flex-end' },
     scroll: { flex: 1 },
     content: { paddingHorizontal: layout.gutter, paddingBottom: spacing.xxl },

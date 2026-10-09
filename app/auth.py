@@ -1,4 +1,4 @@
-"""Bearer-token authentication against the Supabase JWKS, plus the local development issuer."""
+"""Bearer-token authentication against the Supabase JWKS, the issuer in every environment."""
 
 from __future__ import annotations
 
@@ -34,10 +34,7 @@ class Principal(BaseModel):
 
 @lru_cache(maxsize=1)
 def _jwks_client() -> jwt.PyJWKClient:
-    config = get_config()
-    if not config.AUTH_JWKS_URL:
-        raise _AUTH_UNAVAILABLE
-    return jwt.PyJWKClient(config.AUTH_JWKS_URL, cache_keys=True, lifespan=300, timeout=5)
+    return jwt.PyJWKClient(get_config().AUTH_JWKS_URL, cache_keys=True, lifespan=300, timeout=5)
 
 
 def _verify_with_jwks(token: str, audience: str | None = None) -> dict[str, Any]:
@@ -62,10 +59,7 @@ def _verify_with_jwks(token: str, audience: str | None = None) -> dict[str, Any]
 
 
 async def verify_bearer_token(token: str, *, audience: str | None = None) -> dict[str, Any]:
-    config = get_config()
-    if config.AUTH_JWKS_URL:
-        return await run_in_threadpool(_verify_with_jwks, token, audience)
-    raise _AUTH_UNAVAILABLE
+    return await run_in_threadpool(_verify_with_jwks, token, audience)
 
 
 def _as_str(value: Any) -> str | None:

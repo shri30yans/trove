@@ -1,8 +1,9 @@
 """The body-size and rate-limit middleware.
 
-Both guards key off attacker-controlled input (a Content-Length header, the source address), and the
-rate-limit table is held in process memory, so its bound and its eviction are worth pinning down.
-The limit constants are patched down here; the production values are not what is under test.
+Both guards key off attacker-controlled input (a Content-Length header, and for anonymous traffic a
+forwarded address the deployment cannot pin), and the rate-limit table is held in process memory, so
+its bound, its eviction, and what it uses as a bucket are worth pinning down. The limit constants
+are patched down here; the production values are not what is under test.
 """
 
 from __future__ import annotations
@@ -86,25 +87,31 @@ async def test_an_absent_peer_address_gets_its_own_bucket(windows: Any) -> None:
     call_next = Passthrough()
     for _ in range(4):
         assert (await rate_limit.apply_limits(make_request(""), call_next)).status_code in (200, 429)  # type: ignore[arg-type]
-    assert list(windows) == ["unknown"]
+    assert list(windows) == ["address:unknown"]
 
 
 async def test_requests_older_than_the_window_are_already_forgiven(windows: Any) -> None:
     call_next = Passthrough()
     stale = time.monotonic() - 61
-    windows["203.0.113.1"] = deque([stale, stale, stale, stale])
+    windows["address:203.0.113.1"] = deque([stale, stale, stale, stale])
     response = await rate_limit.apply_limits(make_request(), call_next)  # type: ignore[arg-type]
     assert response.status_code == 200
-    assert len(windows["203.0.113.1"]) == 1
+    assert len(windows["address:203.0.113.1"]) == 1
 
 
-async def test_quiet_clients_are_dropped_from_the_table(windows: Any) -> None:
-    now = time.monotonic()
-    windows["quiet"] = deque([now - 61])
-    windows["idle"] = deque()
-    windows["active"] = deque([now - 1])
-    rate_limit._forget_quiet_clients(now)
-    assert list(windows) == ["active"]
+async def test_the_table_holds_its_bound_by_dropping_the_least_recently_seen_client(
+    windows: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(rate_limit, "RATE_LIMIT_TRACKED_CLIENTS", 2)
+    call_next = Passthrough()
+    await rate_limit.apply_limits(make_request("203.0.113.1"), call_next)  # type: ignore[arg-type]
+    await rate_limit.apply_limits(make_request("203.0.113.2"), call_next)  # type: ignore[arg-type]
+    assert list(windows) == ["address:203.0.113.1", "address:203.0.113.2"]
+
+    # Seeing 203.0.113.1 again makes it the newest, so the flood evicts 203.0.113.2 instead.
+    await rate_limit.apply_limits(make_request("203.0.113.1"), call_next)  # type: ignore[arg-type]
+    await rate_limit.apply_limits(make_request("198.51.100.9"), call_next)  # type: ignore[arg-type]
+    assert list(windows) == ["address:203.0.113.1", "address:198.51.100.9"]
 
 
 async def test_a_flood_of_new_addresses_cannot_grow_the_table_without_bound(
@@ -112,13 +119,52 @@ async def test_a_flood_of_new_addresses_cannot_grow_the_table_without_bound(
 ) -> None:
     monkeypatch.setattr(rate_limit, "RATE_LIMIT_TRACKED_CLIENTS", 2)
     call_next = Passthrough()
-    now = time.monotonic()
-    windows["old-1"] = deque([now - 61])
-    windows["old-2"] = deque([now - 61])
-    await rate_limit.apply_limits(make_request("203.0.113.9"), call_next)  # type: ignore[arg-type]
-    assert "old-1" not in windows
-    assert "old-2" not in windows
-    assert "203.0.113.9" in windows
+    for last_octet in range(200):
+        await rate_limit.apply_limits(make_request(f"203.0.113.{last_octet}"), call_next)  # type: ignore[arg-type]
+    assert len(windows) == 2
+    assert "address:203.0.113.199" in windows
+
+
+async def test_a_bearer_token_gets_one_bucket_and_the_address_stops_mattering(windows: Any) -> None:
+    """A forwarded address is not dependable on Heroku, so a credential keys its own bucket."""
+    call_next = Passthrough()
+    token = {"authorization": "Bearer synthetic-token"}
+    for _ in range(3):
+        assert (await rate_limit.apply_limits(make_request("203.0.113.1", token), call_next)).status_code == 200  # type: ignore[arg-type]
+    assert (await rate_limit.apply_limits(make_request("198.51.100.2", token), call_next)).status_code == 429  # type: ignore[arg-type]
+
+
+async def test_two_credentials_never_share_a_bucket(windows: Any) -> None:
+    """Exhausting one caller must not silence the next one behind the same router address."""
+    call_next = Passthrough()
+    statuses = []
+    for _ in range(4):
+        response = await rate_limit.apply_limits(
+            make_request("203.0.113.1", {"authorization": "Bearer token-a"}), call_next
+        )  # type: ignore[arg-type]
+        statuses.append(response.status_code)
+    assert statuses == [200, 200, 200, 429]
+    assert (
+        await rate_limit.apply_limits(make_request("203.0.113.1", {"authorization": "Bearer token-b"}), call_next)  # type: ignore[arg-type]
+    ).status_code == 200
+    assert len(windows) == 2
+
+
+async def test_the_table_holds_a_digest_and_never_the_credential(windows: Any) -> None:
+    token = "eyJhbGciOi synthetic-signin-token-not-a-real-credential"
+    await rate_limit.apply_limits(make_request("203.0.113.1", {"authorization": f"Bearer {token}"}), Passthrough())  # type: ignore[arg-type]
+    assert len(windows) == 1
+    key = next(iter(windows))
+    assert key.startswith("credential:")
+    assert token not in key
+    assert token not in "".join(windows)
+
+
+async def test_a_non_bearer_authorization_header_falls_back_to_the_address(windows: Any) -> None:
+    await rate_limit.apply_limits(
+        make_request("203.0.113.7", {"authorization": "Basic c3ludGhldGljCg=="}), Passthrough()
+    )  # type: ignore[arg-type]
+    assert list(windows) == ["address:203.0.113.7"]
 
 
 async def test_the_response_carries_the_headers_helmet_used_to_set(windows: Any) -> None:

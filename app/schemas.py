@@ -87,6 +87,15 @@ class UpdateMemoryRequest(BaseModel):
     title: MaybeTrimmed = Field(default=None, max_length=500)
     userNote: OptionalText = Field(default=None, max_length=20_000)
     spaceIds: list[str] | None = None
+    tags: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("tags")
+    @classmethod
+    def _check_tags(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip().lower() for value in values]
+        if any(not value or len(value) > 40 for value in normalized):
+            raise ValueError("Tags must contain between 1 and 40 characters")
+        return list(dict.fromkeys(normalized))
 
     @field_validator("spaceIds")
     @classmethod

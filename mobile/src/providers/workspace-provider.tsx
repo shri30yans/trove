@@ -10,7 +10,7 @@ import { useCaptureDelivery } from '../features/sync/use-capture-delivery';
 import { useShareIntentCapture } from '../features/capture/use-share-intent-capture';
 import { useTroveToastContext } from './toast-provider';
 import { useTrovePreferences } from './preferences-provider';
-import type { ExploreData, Memory, MemoryCapture, ResurfacingUpdate, Space } from '../types';
+import type { ExploreData, Memory, MemoryCapture, ResurfacingUpdate, Space, WrittenSpace } from '../types';
 
 
 export type WorkspaceData = {
@@ -34,7 +34,7 @@ export type WorkspaceData = {
 
 export type WorkspaceActions = {
   setDefaultCaptureSpaceId: (id: string | null) => void;
-  addSpace: (space: Space) => void;
+  addSpace: (space: WrittenSpace) => void;
   loadWorkspace: (quiet?: boolean) => Promise<void>;
   loadMoreMemories: () => Promise<void>;
   saveCapture: (capture: MemoryCapture) => Promise<boolean>;

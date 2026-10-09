@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 from starlette.requests import Request
 
+from app import upload_transfer
 from app.auth import Principal
 from app.errors import ApiError
 from app.routes import uploads
@@ -31,7 +32,10 @@ def upload(monkeypatch):
     }
     lookup = AsyncMock(return_value=row)
     release = AsyncMock()
+    # The route answers with `execute` and the transport releases the reservation with its own copy of
+    # the pooled helper, so one mock has to stand in for both.
     monkeypatch.setattr(uploads, "execute", release)
+    monkeypatch.setattr(upload_transfer, "execute", release)
     stored = []
 
     async def write(path, key, mime):

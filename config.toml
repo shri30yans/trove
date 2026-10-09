@@ -1,28 +1,52 @@
 # Non-secret settings shared by the Trove API.
 # Environment variables (including values loaded from local.env/stage.env/prod.env) override these.
+#
+# The values below describe one Supabase project and one Vertex project, so a checkout boots with
+# only its credentials in the environment: DATABASE_URL, S3_ACCESS_KEY, S3_SECRET_KEY and
+# SUPABASE_SECRET_KEY, plus VERTEX_SERVICE_ACCOUNT_JSON_B64 wherever embeddings run.
+# Nothing here is a fallback for a missing credential; a missing one stops the process at startup,
+# and app.config rejects this file outright if a credential is ever committed into it.
+#
+# SUPABASE_AUTH_API_KEY is the exception worth naming: it is Supabase's publishable key, public by
+# design and shipped in client bundles, so it is configuration rather than a secret. It is still a
+# per-project value, so this file does not carry it and each environment supplies it. Putting a
+# secret or service-role key in that field fails startup on its shape, not on a convention.
+#
+# Every profile is validated at every startup, including the ones not being booted, so a malformed
+# section fails here instead of at that environment's next deploy. `stage` has no section because
+# that environment supplies its own endpoints; a section that exists must be valid.
+# Run `python -m app.config` to see each effective key, the layer that supplied it, and its masked value.
 
 [defaults]
 API_HOST = "0.0.0.0"
 API_PORT = 4000
 S3_BUCKET = "trove-private"
+S3_ENDPOINT = "https://enupfdacvbaugbotkrie.storage.supabase.co/storage/v1/s3"
+S3_REGION = "ap-southeast-2"
 S3_FORCE_PATH_STYLE = true
 MAX_UPLOAD_BYTES = 52428800
+# A Google Cloud project id names a billing project and authorizes nothing, so it is a setting;
+# VERTEX_SERVICE_ACCOUNT_JSON_B64 is the credential, and it stays in the environment.
+VERTEX_PROJECT_ID = "gen-lang-client-0736864310"
 VERTEX_LOCATION = "us"
 AUTH_AUDIENCE = "authenticated"
-MCP_PUBLIC_URL = "http://localhost:4000/mcp"
+SUPABASE_URL = "https://enupfdacvbaugbotkrie.supabase.co"
+AUTH_JWKS_URL = "https://enupfdacvbaugbotkrie.supabase.co/auth/v1/.well-known/jwks.json"
+AUTH_ISSUER = "https://enupfdacvbaugbotkrie.supabase.co/auth/v1"
 
 [environments.local]
 CORS_ORIGIN = "*"
+# Only a local process may advertise a plain-HTTP MCP endpoint, and only on loopback.
+MCP_PUBLIC_URL = "http://localhost:4000/mcp"
+# uvicorn reads the client address from X-Forwarded-For for requests arriving from these. On a
+# developer network that address is a hint only, never an authorization input.
 PROXY_TRUSTED_IPS = "*"
 
 [environments.prod]
 CORS_ORIGIN = "https://zyphrlabs.com"
-# Deliberately trust forwarded headers from every source; this allows X-Forwarded-For spoofing.
-PROXY_TRUSTED_IPS = "*"
-S3_ENDPOINT = "https://enupfdacvbaugbotkrie.storage.supabase.co/storage/v1/s3"
-S3_REGION = "ap-southeast-2"
-VERTEX_PROJECT_ID = "gen-lang-client-0736864310"
-AUTH_JWKS_URL = "https://enupfdacvbaugbotkrie.supabase.co/auth/v1/.well-known/jwks.json"
-AUTH_ISSUER = "https://enupfdacvbaugbotkrie.supabase.co/auth/v1"
-SUPABASE_URL = "https://enupfdacvbaugbotkrie.supabase.co"
 MCP_PUBLIC_URL = "https://api.trove.zyphrlabs.com/mcp"
+# Heroku's common runtime publishes no router-to-dyno address ranges and documents its forwarded
+# headers as untrusted, so a pinned CIDR is not available. The rate limiter keys authenticated
+# traffic on the bearer token rather than on this address; anonymous traffic stays address-keyed
+# and is additionally bounded by Supabase's own sign-in and email throttles.
+PROXY_TRUSTED_IPS = "*"

@@ -92,7 +92,7 @@ test('native flows do not use the unsupported keyboard and screenshot commands',
 });
 
 test('editable screens use the shared screen boundary', () => {
-  for (const file of ['features/capture/capture-screen.tsx', 'features/search/search-screen.tsx', 'features/spaces/space-sheet.tsx', 'features/memories/memory-detail-sheet.tsx']) {
+  for (const file of ['features/capture/capture-screen.tsx', 'features/search/search-screen.tsx', 'features/spaces/space-sheet.tsx', 'features/memories/memory-detail-screen.tsx']) {
     assert.match(fs.readFileSync(path.join(SRC, file), 'utf8'), /<(?:ScreenFrame|FormScreen)[\s>]/, `${file}: use the common safe-area and keyboard boundary.`);
   }
 });

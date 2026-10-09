@@ -1,6 +1,6 @@
 import type { z } from 'zod';
 import { z as zod } from 'zod';
-import * as SecureStore from 'expo-secure-store';
+import { readSessionValue, writeSessionValue } from './session-store';
 import { parseContract, parseRequest } from './schemas/common';
 import {
   authCredentialsSchema,
@@ -55,28 +55,28 @@ async function fetchJson(url: string, init: RequestInit): Promise<{ response: Re
 
 async function loadStoredSession() {
   if (sessionLoaded) return session;
-  const encoded = await SecureStore.getItemAsync(SESSION_KEY);
+  const encoded = await readSessionValue(SESSION_KEY);
   if (encoded) {
     session = parseContract(storedAuthSessionSchema, JSON.parse(encoded));
     sessionLoaded = true;
     return session;
   }
-  const legacyToken = await SecureStore.getItemAsync(LEGACY_TOKEN_KEY);
+  const legacyToken = await readSessionValue(LEGACY_TOKEN_KEY);
   session = legacyToken ? { accessToken: legacyToken, refreshToken: null, expiresAt: null } : null;
   sessionLoaded = true;
   return session;
 }
 
 async function saveSession(next: AuthSession) {
-  await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(next));
-  await SecureStore.deleteItemAsync(LEGACY_TOKEN_KEY);
+  await writeSessionValue(SESSION_KEY, JSON.stringify(next));
+  await writeSessionValue(LEGACY_TOKEN_KEY, null);
   session = next;
   sessionLoaded = true;
 }
 
 async function clearSession() {
-  await SecureStore.deleteItemAsync(SESSION_KEY);
-  await SecureStore.deleteItemAsync(LEGACY_TOKEN_KEY);
+  await writeSessionValue(SESSION_KEY, null);
+  await writeSessionValue(LEGACY_TOKEN_KEY, null);
   session = null;
   sessionLoaded = true;
 }
@@ -141,7 +141,13 @@ export async function resendConfirmationEmail(email: string) {
 
 export async function confirmEmailWithToken(tokenHash: string) {
   const body = parseRequest(zod.strictObject({ token_hash: zod.string().min(1).max(4096) }), { token_hash: tokenHash });
-  return requestUnauthenticated('/v1/auth/confirm-email', confirmEmailResponseSchema, body);
+  const result = await requestUnauthenticated('/v1/auth/confirm-email', confirmEmailResponseSchema, body);
+  if (result.status === 'authenticated') await persistProviderSession(result.session);
+  return result;
+}
+
+export async function acceptEmailConfirmationSession(sessionValue: unknown) {
+  await persistProviderSession(parseContract(authSessionSchema, sessionValue));
 }
 
 export async function acceptPasswordRecoveryUrl(url: string) {

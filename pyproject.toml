@@ -13,7 +13,7 @@ markers = [
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-extend-exclude = ["legacy", "mobile", "design-reference", "tools"]
+extend-exclude = ["mobile", "design-reference", "tools"]
 
 [tool.ruff.lint]
 select = [
@@ -44,6 +44,8 @@ ignore = [
 "app/main.py" = ["ARG001"]
 # The migrator is a CLI: its output is the interface.
 "app/migrate.py" = ["T201"]
+# `python -m app.config` prints the effective configuration for operators, values masked.
+"app/config.py" = ["T201"]
 # ANN401 (no Any) is a Phase 2 goal: it needs Pydantic response models to replace dict DTOs.
 
 [tool.mypy]

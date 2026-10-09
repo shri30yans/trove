@@ -2,14 +2,14 @@ import { MemoryImage } from '../../components/memory-image';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { IconBadge, kindIcons, memoryTitle, SectionHeading } from '../../components';
+import { memoryCountLabel } from '../../utils/memory-metadata';
 import { DecorativeOrb } from '../../components/decorative-orb';
 import { MemoryTypePillRail } from '../../components/memory-type-pill-rail';
 import { useThemedStyles, useTheme } from '../../providers/theme-provider';
-import { iconBadge, radii, spacing, text } from '../../theme';
+import { collectionTints, glass, iconBadge, radii, spacing, text } from '../../theme';
 import type { Palette } from '../../theme';
 import type { ExploreData, Memory, ResurfacingUpdate, Space } from '../../types';
 
-function collectionTints(colors: Palette) { return [colors.petal, colors.icyBlue, colors.lavender, colors.greenTint]; }
 export function TroveExploreScreen({ memories, spaces, data, updates, loading, onOpenSpaces, onOpenSpace, onCreateSpace, onOpenMonth, onOpenMemory, onSearch, onCreateMemory }:
   { memories: Memory[]; spaces: Space[]; data: ExploreData | null; updates: ResurfacingUpdate[]; loading: boolean; onOpenSpaces: () => void; onOpenSpace: (id: string) => void; onCreateSpace: () => void; onOpenMonth: (month: string, memoryCount: number) => void; onOpenMemory: (memory: Memory) => void; onSearch: (query: string, kind?: string) => void; onCreateMemory: () => void }) {
   const { colors } = useTheme();
@@ -36,7 +36,7 @@ export function TroveExploreScreen({ memories, spaces, data, updates, loading, o
       <SectionHeading title="Spaces" action="See all" onAction={onOpenSpaces} style={styles.exploreSectionHeading} />
       {loading && !spaces.length ? <View style={styles.exploreLoading}><ActivityIndicator color={colors.blueDeep} /></View>
         : <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} contentContainerStyle={styles.spaceRail}>
-          {spaces.slice(0, 4).map((space, index) => <Pressable key={space.id} onPress={() => onOpenSpace(space.id)} style={({ pressed }) => [styles.exploreSpaceCard, pressed && styles.exploreCardPressed]} accessibilityRole="button" accessibilityLabel={`${space.name}, ${space.memoryCount ?? 0} ${space.memoryCount === 1 ? 'memory' : 'memories'}`}>
+          {spaces.slice(0, 4).map((space, index) => <Pressable key={space.id} onPress={() => onOpenSpace(space.id)} style={({ pressed }) => [styles.exploreSpaceCard, pressed && styles.exploreCardPressed]} accessibilityRole="button" accessibilityLabel={`${space.name}, ${memoryCountLabel(space.memoryCount)}`}>
             <View style={[styles.spaceArtwork, { backgroundColor: space.color || tints[index % tints.length] }]}><Ionicons name="folder-open-outline" size={22} color={colors.foreground} /></View>
             <View style={styles.exploreSpaceCopy}><Text numberOfLines={1} ellipsizeMode="tail" style={styles.exploreSpaceTitle}>{space.name}</Text></View>
           </Pressable>)}
@@ -98,8 +98,8 @@ function makeStyles(colors: Palette) {
     monthRecapTitle: { color: colors.foreground, ...text.display },
     monthRecapAction: { marginTop: spacing.lg, color: colors.foreground, fontSize: 10, fontWeight: '600' },
     monthArtwork: { width: 108, height: 122, position: 'relative', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', borderRadius: radii.md, backgroundColor: colors.lavender },
-    monthArtworkRing: { width: 70, height: 70, position: 'absolute', bottom: -35, left: -20, borderWidth: 10, borderColor: 'rgba(255,255,255,0.35)', borderRadius: radii.pill },
-    monthArtworkIcon: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(48,45,59,0.12)', borderRadius: radii.md, backgroundColor: 'rgba(255,255,255,0.62)' },
+    monthArtworkRing: { width: 70, height: 70, position: 'absolute', bottom: -35, left: -20, borderWidth: 10, borderColor: glass.faint, borderRadius: radii.pill },
+    monthArtworkIcon: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, backgroundColor: glass.soft },
     monthPhoto: { position: 'absolute', width: '51%', height: '50%', borderWidth: 3, borderColor: colors.surface, borderRadius: radii.md },
     monthPhotoBack: { left: 6, top: 13, transform: [{ rotate: '-9deg' }] },
     monthPhotoFront: { right: 6, bottom: 13, transform: [{ rotate: '8deg' }] },

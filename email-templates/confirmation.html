@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Confirm your Trove account</title></head>
+<body style="margin:0;padding:0;background:#F4F2EF;font-family:Arial,Helvetica,sans-serif;color:#292631;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#F4F2EF;padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:480px;background:#FFFFFF;border:1px solid #E9E5E0;border-radius:16px;">
+        <tr><td style="padding:32px 32px 28px;">
+          <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;margin:0 0 24px;">
+            <tr>
+              <td style="padding:0 12px 0 0;vertical-align:middle;background:transparent;"><img src="https://api.trove.zyphrlabs.com/brand/trove.png" width="48" height="48" border="0" alt="" style="display:block;width:48px;height:48px;border:0;outline:none;text-decoration:none;background:transparent;"></td>
+              <td style="vertical-align:middle;font-family:Georgia,serif;font-size:25px;line-height:30px;font-weight:600;letter-spacing:-0.5px;color:#292631;">Trove</td>
+            </tr>
+          </table>
+          <h1 style="font-family:Georgia,serif;font-size:22px;line-height:28px;font-weight:500;letter-spacing:-0.4px;margin:0 0 12px;color:#22212B;">Confirm your email</h1>
+          <p style="font-size:13px;line-height:19px;color:#4A4858;margin:0 0 20px;">Tap below to confirm this email address and finish setting up your Trove account.</p>
+          <p style="margin:0 0 22px;"><a href="{{ .RedirectTo }}#token_hash={{ .TokenHash }}&amp;type=signup" style="display:inline-block;padding:13px 24px;background:#6B4FA0;border-radius:8px;font-size:14px;line-height:18px;font-weight:600;color:#FFFFFF;text-decoration:none;">Confirm email address</a></p>
+          <p style="font-size:10px;line-height:14px;color:#777380;margin:0 0 5px;">Button not working? Copy and paste this link into your browser:</p>
+          <p style="font-size:10px;line-height:14px;margin:0 0 18px;word-break:break-all;"><a href="{{ .RedirectTo }}#token_hash={{ .TokenHash }}&amp;type=signup" style="color:#6B4FA0;text-decoration:underline;">{{ .RedirectTo }}#token_hash={{ .TokenHash }}&amp;type=signup</a></p>
+          <p style="font-size:10px;line-height:14px;color:#777380;margin:0 0 20px;">If you did not create a Trove account, you can safely ignore this email.</p>
+          <p style="border-top:1px solid #E9E5E0;padding-top:14px;font-size:9px;line-height:13px;color:#898692;margin:0;">Trove · noreply@mail.trove.zyphrlabs.com</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+  <!-- Retain Supabase's standard confirmation URL template variable for provider compatibility. -->
+  <!-- {{ .ConfirmationURL }} -->
+</body>
+</html>

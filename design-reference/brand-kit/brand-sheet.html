@@ -1,0 +1,96 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; box-sizing: border-box; font-family: -apple-system, "SF Pro Display", "Helvetica Neue", sans-serif; }
+  body { width: 1400px; background: #F4F6FB; color: #2A2933; padding: 56px; }
+  h1 { font-size: 44px; font-weight: 800; letter-spacing: -1px; }
+  h1 span { color: #6B4FA0; }
+  .eyebrow { font-size: 13px; font-weight: 700; letter-spacing: 3px; color: #6B4FA0; text-transform: uppercase; margin-bottom: 6px; }
+  .sub { font-size: 17px; color: #6E6C7A; margin-top: 8px; max-width: 900px; line-height: 1.5; }
+  .grid { display: grid; grid-template-columns: 420px 1fr; gap: 28px; margin-top: 36px; }
+  .card { background: #fff; border: 1px solid #E3E6F0; border-radius: 20px; padding: 28px; }
+  .card h2 { font-size: 13px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #6E6C7A; margin-bottom: 18px; }
+  .mascot { display: flex; gap: 18px; align-items: center; justify-content: center; }
+  .mascot img { width: 180px; height: 180px; object-fit: contain; background: #F4F6FB; border-radius: 18px; }
+  .swatches { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .sw { border-radius: 14px; overflow: hidden; border: 1px solid #E3E6F0; }
+  .sw .chip { height: 74px; }
+  .sw .meta { padding: 10px 12px; font-size: 12.5px; line-height: 1.45; background: #fff; }
+  .sw .meta b { display: block; font-size: 13.5px; }
+  .type div { margin-bottom: 14px; }
+  .wordmark { font-size: 15px; font-weight: 700; letter-spacing: 4px; color: #2A2933; text-transform: uppercase; }
+  .darkband { background: #201F27; border-radius: 14px; padding: 22px 26px; color: #D9CBE8; }
+  .darkband .wordmark { color: #D9CBE8; }
+  .traits { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+  .pill { border: 1.5px solid #6B4FA0; color: #6B4FA0; border-radius: 999px; padding: 7px 16px; font-size: 14px; font-weight: 600; }
+  .pill.solid { background: #2A2933; border-color: #2A2933; color: #fff; }
+  .note { font-size: 13.5px; color: #6E6C7A; line-height: 1.55; margin-top: 14px; }
+  .full { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+  <div class="eyebrow">Trove — Brand Kit</div>
+  <h1>The quiet keeper of your <span>memories</span>.</h1>
+  <div class="sub">Trove is a personal memory vault: capture notes, links, files and voice; find anything later by meaning. The brand is calm, warm, trustworthy — an archive, not a productivity tool.</div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Mascot — the clay owl</h2>
+      <div class="mascot">
+        <img src="mascot-owl-sitting.png" alt="sitting owl">
+        <img src="mascot-owl-standing.png" alt="standing owl">
+      </div>
+      <div class="note">Soft matte-clay 3D style. Warm brown feathers, cream face/belly, sage-green eyes, terracotta beak and feet. Owl = wisdom + keeper of hidden treasure. Any logo should feel like it belongs in this family: rounded, gentle, slightly toy-like — not corporate or sharp.</div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2>Palette — light theme (primary)</h2>
+        <div class="swatches">
+          <div class="sw"><div class="chip" style="background:#2A2933"></div><div class="meta"><b>Deep</b>#2A2933 · buttons, dock, high-contrast fill</div></div>
+          <div class="sw"><div class="chip" style="background:#6B4FA0"></div><div class="meta"><b>Blue deep</b>#6B4FA0 · brand accent, wordmark, links</div></div>
+          <div class="sw"><div class="chip" style="background:#B8D0F0"></div><div class="meta"><b>Sky blue</b>#B8D0F0 · tinted surfaces, highlights</div></div>
+          <div class="sw"><div class="chip" style="background:#F4F6FB"></div><div class="meta"><b>Canvas</b>#F4F6FB · app background</div></div>
+          <div class="sw"><div class="chip" style="background:#FFFFFF;border-bottom:1px solid #E3E6F0"></div><div class="meta"><b>Surface</b>#FFFFFF · cards, fields</div></div>
+          <div class="sw"><div class="chip" style="background:#E3E6F0"></div><div class="meta"><b>Border</b>#E3E6F0 · hairlines</div></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:28px">
+        <h2>Palette — dark theme</h2>
+        <div class="darkband">
+          <div class="wordmark">TROVE</div>
+          <div style="display:flex;gap:10px;margin-top:14px">
+            <span style="width:34px;height:34px;border-radius:9px;background:#D9CBE8"></span>
+            <span style="width:34px;height:34px;border-radius:9px;background:#B69BE3"></span>
+            <span style="width:34px;height:34px;border-radius:9px;background:#456184"></span>
+            <span style="width:34px;height:34px;border-radius:9px;background:#201F27;border:1px solid #456184"></span>
+          </div>
+          <div class="note" style="color:#A9A6B5">Lavender #D9CBE8 on near-black; violet #B69BE3 accent. The app follows the phone's light/dark setting by default — the logo must work on both.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Typography & wordmark</h2>
+      <div class="type">
+        <div style="font-size:30px;font-weight:800;letter-spacing:-0.5px">Page title — semibold, tight</div>
+        <div style="font-size:16px;color:#6E6C7A">Body — calm grey, generous line height.</div>
+        <div class="wordmark">TROVE &nbsp;·&nbsp; small caps, wide tracking, violet in headers</div>
+      </div>
+      <div class="note">System font (SF Pro / Roboto). No serif, no script. The in-app wordmark is pure type — a logo mark must sit beside it without fighting it.</div>
+    </div>
+
+    <div class="card">
+      <h2>Brand traits</h2>
+      <div class="traits">
+        <span class="pill solid">Calm</span><span class="pill solid">Warm</span><span class="pill solid">Private</span>
+        <span class="pill">Rounded geometry</span><span class="pill">Soft matte, no gloss</span><span class="pill">Reads at 48px</span>
+        <span class="pill">Works monochrome</span><span class="pill">Archive, not to-do</span><span class="pill">No gradients-on-white corporate look</span>
+      </div>
+      <div class="note">Logo guidance: rounded, toy-like shapes echo the clay owl; periwinkle→violet family echoes the app; avoid sharp edges, metallic effects, and generic cloud/sync iconography. The owl itself is a legitimate logo subject — a flat, simplified owl head in Deep/Blue-deep would tie mascot and mark together.</div>
+    </div>
+  </div>
+</body>
+</html>

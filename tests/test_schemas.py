@@ -91,6 +91,14 @@ def test_update_memory_treats_an_explicit_null_and_an_absent_field_differently()
     assert cleared.userNote is None
 
 
+def test_memory_tags_normalize_duplicates_and_enforce_limits() -> None:
+    assert UpdateMemoryRequest.model_validate({"tags": [" Reading ", "reading", "Books"]}).tags == ["reading", "books"]
+    with pytest.raises(ValidationError):
+        UpdateMemoryRequest.model_validate({"tags": ["x" * 41]})
+    with pytest.raises(ValidationError):
+        UpdateMemoryRequest.model_validate({"tags": [f"tag-{index}" for index in range(21)]})
+
+
 def test_space_name_is_required_on_create_and_optional_on_patch() -> None:
     assert CreateSpaceRequest.model_validate({"name": " Reading "}).name == "Reading"
     with pytest.raises(ValidationError):

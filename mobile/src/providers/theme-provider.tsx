@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';
-import { Alert } from 'react-native';
+import { Alert, useColorScheme } from 'react-native';
 import { useStoredPreference } from '../hooks/use-stored-preference';
 import { themePreference } from '../storage/local-preferences';
 import { themes, type Palette, type ThemeId } from '../theme';
@@ -15,7 +15,9 @@ type ThemeValue = {
 const ThemeContext = createContext<ThemeValue | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const { value: theme, loaded: themeLoaded, error, setValue: changeTheme } = useStoredPreference(themePreference, 'light');
+  const { value: storedTheme, loaded: themeLoaded, error, setValue: changeTheme } = useStoredPreference(themePreference, null);
+  const systemTheme: ThemeId = useColorScheme() === 'dark' ? 'dark' : 'light';
+  const theme = storedTheme ?? systemTheme;
   useEffect(() => {
     if (error) Alert.alert('Appearance settings unavailable', error);
   }, [error]);

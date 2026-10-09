@@ -485,6 +485,7 @@ export const text = {
   buttonSmall: { fontSize: 13, fontWeight: '600' },
   subtitle: { fontSize: 12, lineHeight: 17 },
   body: { fontSize: 13, lineHeight: 20 },
+  reading: { fontSize: 15, lineHeight: 23 },
   caption: { fontSize: 11, lineHeight: 15 },
   itemTitle: { fontSize: 13, fontWeight: '600', lineHeight: 18 },
   input: { fontSize: 15, lineHeight: 21 },
@@ -508,4 +509,16 @@ export const shadow = {
 } as const;
 
 /** Translucent fills used on top of tinted artwork. */
-export const glass = { faint: 'rgba(255,255,255,0.4)', soft: 'rgba(255,255,255,0.62)', strong: 'rgba(255,255,255,0.86)' } as const;
+export const glass = {
+  veil: 'rgba(255,255,255,0.24)',
+  faint: 'rgba(255,255,255,0.4)',
+  soft: 'rgba(255,255,255,0.62)',
+  strong: 'rgba(255,255,255,0.86)',
+  /** Small labels and badges sitting on a tinted card, where the veil has to read as solid. */
+  chip: 'rgba(255,255,255,0.75)',
+} as const;
+
+/** The colours a collection cycles through when an entry supplies none of its own. */
+export function collectionTints(colors: Palette): string[] {
+  return [colors.petal, colors.icyBlue, colors.lavender, colors.greenTint];
+}

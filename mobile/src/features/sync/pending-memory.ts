@@ -13,6 +13,8 @@ export function pendingMemory(entry: PendingCapture): Memory {
     contentText: entry.capture.contentText || null,
     sourceUrl: entry.capture.sourceUrl || null,
     sourceApp: entry.capture.sourceApp || null,
+    // The API derives the domain when the capture lands; until then there is none to show.
+    sourceDomain: null,
     capturedAt: entry.capture.capturedAt,
     spaces: [],
     assets: (entry.capture.attachments || []).map((attachment, index) => ({

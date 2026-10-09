@@ -9,8 +9,8 @@ import type { StoragePlan } from '../../types';
 import { PlanStorageCard } from './plan-storage-card';
 import { formatLastSynced } from '../../utils/format-last-synced';
 
-export function ProfileScreen({ backgroundSync, localSettingsLoaded, theme, themeLoaded, syncStatus, pendingCount, syncing, lastSyncedAt, loading, plan, planLoading, planError, onToggleSync, onChangeTheme, onSyncNow, onOpenCloud, onExport, showSignOut, signingOut, deletingAccount, onSignOut, onDeleteAccount }:
-  { localSettingsLoaded: boolean; backgroundSync: boolean; theme: ThemeId; themeLoaded: boolean; syncStatus: SyncStatus; pendingCount: number; syncing: boolean; lastSyncedAt: string | null; loading: boolean; plan: StoragePlan | null; planLoading: boolean; planError: string | null; onToggleSync: (value: boolean) => void; onChangeTheme: (id: ThemeId) => void; onSyncNow: () => void; onOpenCloud: () => void; onExport: () => void; showSignOut: boolean; signingOut: boolean; deletingAccount: boolean; onSignOut: () => void; onDeleteAccount: () => void }) {
+export function ProfileScreen({ backgroundSync, localSettingsLoaded, theme, themeLoaded, syncStatus, pendingCount, syncing, lastSyncedAt, loading, plan, planLoading, planError, onToggleSync, onChangeTheme, onSyncNow, onOpenCloud, onExport, onOpenAccount }:
+  { localSettingsLoaded: boolean; backgroundSync: boolean; theme: ThemeId; themeLoaded: boolean; syncStatus: SyncStatus; pendingCount: number; syncing: boolean; lastSyncedAt: string | null; loading: boolean; plan: StoragePlan | null; planLoading: boolean; planError: string | null; onToggleSync: (value: boolean) => void; onChangeTheme: (id: ThemeId) => void; onSyncNow: () => void; onOpenCloud: () => void; onExport: () => void; onOpenAccount: () => void }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const [themeRail, setThemeRail] = useState({ width: 0, contentWidth: 0, offset: 0 });
@@ -66,7 +66,16 @@ export function ProfileScreen({ backgroundSync, localSettingsLoaded, theme, them
       </Pressable>)}
     </ScrollView>
     <View accessible={false} style={[styles.themeScrollTrack, { width: railWidth }]}><View style={[styles.themeScrollThumb, { width: thumbWidth, transform: [{ translateX: thumbOffset }] }]} /></View>
-    {showSignOut && <View style={styles.signOut}><Button variant="secondary" label="Sign out" loading={signingOut} disabled={deletingAccount} onPress={onSignOut} /><Button variant="danger" label="Delete account" loading={deletingAccount} disabled={signingOut} onPress={onDeleteAccount} /></View>}
+    <>
+      <Eyebrow label="Account" style={[styles.groupGap, styles.sectionLabel]} />
+      <View style={styles.settingsCard}>
+        <Pressable onPress={onOpenAccount} accessibilityRole="button" accessibilityLabel="Open account settings" style={({ pressed }) => [styles.accountRow, pressed && styles.pressed]}>
+          <IconBadge icon="person-circle-outline" />
+          <View style={styles.settingCopy}><Text style={styles.settingTitle}>Account settings</Text><Text style={styles.settingDescription}>Sign out or manage account deletion</Text></View>
+          <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+        </Pressable>
+      </View>
+    </>
     {loading && <View style={styles.profileLoading}><ActivityIndicator color={colors.blueDeep} /></View>}
   </>;
 }
@@ -122,6 +131,6 @@ function makeStyles(colors: Palette) {
     finePrint: { marginTop: spacing.xs, color: colors.muted, ...text.caption },
     dataRow: { minHeight: 82, flexDirection: 'row', alignItems: 'center', gap: spacing.lg, paddingHorizontal: spacing.xl },
     profileLoading: { padding: spacing.xl },
-    signOut: { marginTop: spacing.xxxxl, alignItems: 'flex-start', gap: spacing.lg },
+    accountRow: { minHeight: 76, flexDirection: 'row', alignItems: 'center', gap: spacing.lg, paddingHorizontal: spacing.xl },
   });
 }

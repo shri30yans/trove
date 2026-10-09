@@ -21,7 +21,7 @@ const cases = [
   ['related', search.relatedResponseSchema, { memories: [{ ...card, similarity: 0.8, relation: 'same_topic', reason: 'Shared topic', previewUrl: null }] }],
   ['feedback', search.feedbackResponseSchema, { saved: true }],
   ['explore', overview.exploreSchema, { months: [{ month: '2026-10-01', memoryCount: 2 }] }],
-  ['updates', overview.updatesResponseSchema, { enabled: true, cadence: 'weekly', updates: [{ memory: (({status, ...summary}) => ({ ...summary, previewUrl: null }))(card), relatedTo: { id, title: null, capturedAt: date }, reason: 'Synthetic relation', similarity: 0.8 }] }],
+  ['updates', overview.updatesResponseSchema, { enabled: true, cadence: 'weekly', updates: [{ memory: { ...card, previewUrl: null }, relatedTo: { id, title: null, capturedAt: date }, reason: 'Synthetic relation', similarity: 0.8 }] }],
   ['upload allocation', uploads.uploadResponseSchema, { assetId, uploadPath: `/v1/uploads/${assetId}/content`, method: 'PUT', headers: { 'Content-Type': 'text/plain' } }],
   ['upload completion', uploads.uploadCompleteSchema, { assetId, status: 'uploaded', byteSize: 10 }],
   ['account deletion request', auth.accountDeletionRequestSchema, { requestedAt: date, deleteAfter: '2026-10-15T00:00:00.000Z', deletionCancellable: true }],

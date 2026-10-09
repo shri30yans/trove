@@ -12,6 +12,7 @@ test('email sign-in keeps a deletion-pending account on the locked state', async
     useContext: () => null,
     useEffect: () => {},
     useMemo: (factory) => factory(),
+    useRef: (current) => ({ current }),
     useState: (initial) => {
       const index = stateIndex++;
       let value = initial;

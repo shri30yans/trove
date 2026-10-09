@@ -16,10 +16,14 @@ npm run ios
 npm run android
 ```
 
-Use `npm run start` to run Metro against an installed development client. `npm run start:expo-go` previews screens in Expo Go, but incoming native share intents require the custom client. The share extension accepts text/URLs and shared media/files from other applications. Offline notes, links, and file captures are kept in the app's document storage and sync when connectivity returns.
+Use `npm run start` to run Metro against an installed development client using the default `.env`. Use `npm run start:prod` to target the production cloud API (`https://api.trove.zyphrlabs.com`) or `npm run start:local` to target your local API (`http://localhost:4000`). Standard Expo Go cannot run this application because Trove uses native share extension hooks (`expo-share-intent`) and keyboard controller drivers (`react-native-keyboard-controller`); always use a development build (`npm run ios` or `npm run android`). The share extension accepts text/URLs and shared media/files from other applications. Offline notes, links, and file captures are kept in the app's document storage and sync when connectivity returns.
 
 Run `npm run typecheck` and `npm run lint` to check the TypeScript client. `npm run prebuild` regenerates the native iOS and Android projects from `app.json`.
 
 See [sync-design.md](docs/sync-design.md) for the save-delivery contract, status derivation, recovery behavior, and infrastructure limits. Run `npm test` for the sync regression tests.
+
+## Password reset email setup
+
+The password recovery endpoint redirects email links to `trove://reset-password`. Add that exact URI to the configured Supabase project's Auth redirect URL allow list. The app already registers the `trove` scheme. Reset links are delivered only after the project's email provider and password auth are configured.
 
 Before delivery run `npm run check`. Before release run `npm run verify:ios` and complete screenshot review and the release checklist in [ui-verification.md](docs/ui-verification.md). Missing native verification blocks release.

@@ -25,9 +25,9 @@ function harness() {
 test('changing detail selection does not render a prior memory response', async () => {
   const h = harness();
   h.replies.set(JSON.stringify(['memory', 'one']), { data: { memory: { id: 'one' } }, isPending: false });
-  await h.render().openMemoryId('one');
+  await h.render().loadMemoryDetails('one');
   assert.equal(h.render().detailMemory.id, 'one');
-  await h.render().openMemoryId('two');
+  await h.render().loadMemoryDetails('two');
   assert.equal(h.render().detailMemory, null);
   assert.equal(h.render().detailLoading, true);
 });
@@ -45,7 +45,7 @@ test('failed detail cannot expose a partial list card as editable details', asyn
   const h = harness();
   h.options.memories = [{ id: 'one', title: 'List card' }];
   h.replies.set(JSON.stringify(['memory', 'one']), { error: new Error('Unavailable'), isError: true, isPending: false });
-  await h.render().openMemoryId('one');
+  await h.render().loadMemoryDetails('one');
   const result = h.render();
   assert.equal(result.detailMemory, null);
   assert.equal(result.detailError, 'Unavailable');

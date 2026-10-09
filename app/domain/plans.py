@@ -24,14 +24,3 @@ def get_storage_plan(plan_id: str) -> StoragePlan:
         return PLANS[plan_id]
     except KeyError as error:
         raise ValueError("Unsupported storage plan.") from error
-
-
-def storage_plan_payload(plan_id: str, used_bytes: int) -> dict[str, str | int]:
-    plan = get_storage_plan(plan_id)
-    return {
-        "id": plan.id,
-        "name": plan.name,
-        "storageLimitBytes": plan.limit_bytes,
-        "storageUsedBytes": used_bytes,
-        "storageRemainingBytes": max(0, plan.limit_bytes - used_bytes),
-    }

@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { kindColors, kindIcons, memoryTitle, shortDate } from '../utils/memory-metadata';
 import { Tag } from './tag';
 import { useThemedStyles, useTheme } from '../providers/theme-provider';
-import { layout, press, radii, spacing, text } from '../theme';
+import { glass, layout, press, radii, spacing, text } from '../theme';
 import type { Palette } from '../theme';
 import type { Memory } from '../types';
 
@@ -76,7 +76,7 @@ function makeStyles(colors: Palette) {
     row: { columnGap: spacing.lg },
     tile: { flex: 1, minHeight: 174, overflow: 'hidden', borderRadius: radii.lg },
     tileSelected: { borderWidth: 2, borderColor: colors.deep },
-    selectBadge: { position: 'absolute', top: spacing.md, right: spacing.md, zIndex: 2, width: 24, height: 24, alignItems: 'center', justifyContent: 'center', borderRadius: radii.pill, borderWidth: 1.5, borderColor: colors.deep, backgroundColor: 'rgba(255,255,255,0.9)' },
+    selectBadge: { position: 'absolute', top: spacing.md, right: spacing.md, zIndex: 2, width: 24, height: 24, alignItems: 'center', justifyContent: 'center', borderRadius: radii.pill, borderWidth: 1.5, borderColor: colors.deep, backgroundColor: glass.strong },
     selectBadgeOn: { backgroundColor: colors.deep },
     preview: { width: '100%', height: 84 },
     tileContent: { flex: 1, justifyContent: 'space-between', padding: spacing.lg },

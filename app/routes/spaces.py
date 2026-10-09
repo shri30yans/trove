@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import time
 import uuid
-from typing import Any
+from typing import Self
 
 import asyncpg
 from fastapi import APIRouter, Depends, Request, Response
@@ -14,6 +15,7 @@ from app.auth import Principal, as_uuid, require_auth
 from app.db import fetch, fetchrow
 from app.errors import ApiError, ApiJSONResponse, respond
 from app.schemas import CreateSpaceRequest, UpdateSpaceRequest, parse_body
+from app.serialize import Row, WireModel
 
 logger = logging.getLogger("trove.spaces")
 
@@ -22,21 +24,45 @@ router = APIRouter(dependencies=[Depends(require_auth)])
 _SPACE_COLUMNS = "id, name, description, color, icon, created_at, updated_at"
 
 
-def _as_space(row: dict[str, Any]) -> dict[str, Any]:
-    """The one Space wire shape. memory_count only exists on the list query's join, so a create or
-    update reports no count rather than a guessed one; the client's field is optional."""
-    space = {
-        "id": str(row["id"]),
-        "name": row["name"],
-        "description": row["description"],
-        "color": row["color"],
-        "icon": row["icon"],
-        "createdAt": row["created_at"],
-        "updatedAt": row["updated_at"],
-    }
-    if "memory_count" in row:
-        space["memoryCount"] = row["memory_count"]
-    return space
+class Space(WireModel):
+    """The Space shape every route returns.
+
+    Field names are the client's; `from_row` is where they meet the columns.
+    """
+
+    id: str
+    name: str
+    description: str | None
+    color: str | None
+    icon: str | None
+    createdAt: dt.datetime
+    updatedAt: dt.datetime
+
+    @classmethod
+    def from_row(cls, row: Row) -> Self:
+        return cls(
+            id=str(row["id"]),
+            name=row["name"],
+            description=row["description"],
+            color=row["color"],
+            icon=row["icon"],
+            createdAt=row["created_at"],
+            updatedAt=row["updated_at"],
+        )
+
+
+class SpaceWithMemoryCount(Space):
+    """A listed Space plus its live Memory count, which only the list query's join produces.
+
+    Naming it in a separate model is what stops a create or patch response from carrying a count it
+    never read; the client's field is optional, so absence is a shape the type can express.
+    """
+
+    memoryCount: int
+
+    @classmethod
+    def from_row(cls, row: Row) -> Self:
+        return cls(**Space.from_row(row).model_dump(), memoryCount=row["memory_count"])
 
 
 @router.get("/spaces")
@@ -44,7 +70,7 @@ async def list_spaces(principal: Principal = Depends(require_auth)) -> ApiJSONRe
     return respond(await list_spaces_for_user(principal))
 
 
-async def list_spaces_for_user(principal: Principal) -> dict[str, Any]:
+async def list_spaces_for_user(principal: Principal) -> dict[str, list[SpaceWithMemoryCount]]:
     """List a caller's Spaces for the HTTP route and MCP tools."""
     rows = await fetch(
         """SELECT s.id, s.name, s.description, s.color, s.icon, s.created_at, s.updated_at,
@@ -55,7 +81,7 @@ async def list_spaces_for_user(principal: Principal) -> dict[str, Any]:
            GROUP BY s.id ORDER BY s.created_at ASC""",
         uuid.UUID(principal.id),
     )
-    return {"spaces": [_as_space(row) for row in rows]}
+    return {"spaces": [SpaceWithMemoryCount.from_row(row) for row in rows]}
 
 
 @router.post("/spaces")
@@ -76,7 +102,7 @@ async def create_space(request: Request, principal: Principal = Depends(require_
     if space is None:
         raise ApiError(500, "internal_error", "The request could not be completed.")
     logger.info("space_created space_id=%s elapsed_ms=%.1f", space["id"], (time.perf_counter() - started) * 1000)
-    return respond({"space": _as_space(space)}, 201)
+    return respond({"space": Space.from_row(space)}, 201)
 
 
 @router.patch("/spaces/{space_id}")
@@ -87,7 +113,7 @@ async def update_space(
     return respond({"space": await update_space_for_user(space_id, principal, payload)})
 
 
-async def update_space_for_user(space_id: str, principal: Principal, payload: UpdateSpaceRequest) -> dict[str, Any]:
+async def update_space_for_user(space_id: str, principal: Principal, payload: UpdateSpaceRequest) -> Space:
     """Update an owned Space from validated domain input, shared by HTTP and MCP."""
     fields = payload.model_fields_set
     try:
@@ -110,7 +136,7 @@ async def update_space_for_user(space_id: str, principal: Principal, payload: Up
         raise ApiError(409, "space_name_exists", "A Space with that name already exists.") from error
     if space is None:
         raise ApiError(404, "space_not_found", "Space not found.")
-    return _as_space(space)
+    return Space.from_row(space)
 
 
 @router.delete("/spaces/{space_id}", status_code=204)

@@ -11,7 +11,7 @@ type IconName = ComponentProps<typeof Ionicons>['name'];
  * The only button in the app. `primary` commits, `secondary` offers an equal-weight
  * alternative, `quiet` is a bare text action. Size steps match `control`.
  */
-export function Button({ label, onPress, variant = 'primary', size = 'default', icon, iconPosition = 'left', loading = false, disabled = false, fills = false, style }: {
+export function Button({ label, onPress, variant = 'primary', size = 'default', icon, iconPosition = 'left', loading = false, disabled = false, fills = false, muted = false, style }: {
   label: string;
   onPress: () => void;
   variant?: 'primary' | 'secondary' | 'quiet' | 'danger';
@@ -21,6 +21,8 @@ export function Button({ label, onPress, variant = 'primary', size = 'default', 
   loading?: boolean;
   disabled?: boolean;
   fills?: boolean;
+  /** De-emphasises the label for lower-priority actions, e.g. recovery links beside a primary path. */
+  muted?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
   const { colors } = useTheme();
@@ -37,6 +39,7 @@ export function Button({ label, onPress, variant = 'primary', size = 'default', 
         size === 'compact' && styles.labelCompact,
         size === 'large' && styles.labelLarge,
         !onDark && styles.labelOnLight,
+        muted && styles.labelMuted,
       ]}
     >
       {label}
@@ -50,6 +53,7 @@ export function Button({ label, onPress, variant = 'primary', size = 'default', 
       accessibilityLabel={label}
       accessibilityState={{ disabled: disabled || loading, busy: loading }}
       hitSlop={quiet ? spacing.lg : undefined}
+      android_ripple={null} // kills the platform focus rim, which lingers after a tap; `press.pressed` is the feedback
       style={({ pressed }) => [
         styles.base,
         quiet ? styles.quiet : variant === 'danger' ? styles.danger : onDark ? styles.primary : styles.secondary,
@@ -82,5 +86,6 @@ function makeStyles(colors: Palette) {
     labelCompact: { ...text.buttonSmall },
     labelLarge: { ...text.buttonLarge },
     labelOnLight: { color: colors.foreground },
+    labelMuted: { color: colors.muted },
   });
 }

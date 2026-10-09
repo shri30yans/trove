@@ -12,17 +12,20 @@ GRACEFUL_SHUTDOWN_SECONDS = 25
 
 def main() -> None:
     config = get_config()
+    policy = config.policy
+    # Under the reloader a failed boot prints its traceback and the parent keeps watching for the
+    # edit that fixes it, so `local` does not exit on a startup error the way a dyno does.
     uvicorn.run(
         "app.main:app",
         host=config.API_HOST,
         port=config.API_PORT,
-        log_level="info" if config.RUN_ENV == "local" else "warning",
+        log_level="info" if policy.verbose_logging else "warning",
         proxy_headers=True,
         forwarded_allow_ips=config.PROXY_TRUSTED_IPS,
         server_header=False,
         timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
-        reload=config.RUN_ENV == "local",
-        reload_dirs=["app"] if config.RUN_ENV == "local" else None,
+        reload=policy.dev_reloader,
+        reload_dirs=["app"] if policy.dev_reloader else None,
     )
 
 

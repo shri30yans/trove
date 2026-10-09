@@ -25,6 +25,7 @@ ROUTE_TABLE = {
     ("GET", "/health/live"),
     ("GET", "/health/ready"),
     ("GET", "/health/embeddings"),
+    ("GET", "/brand/trove.png"),
     ("GET", "/oauth/consent"),
     ("POST", "/oauth/consent/decision"),
     ("POST", "/oauth/consent/login"),
@@ -34,6 +35,7 @@ ROUTE_TABLE = {
     ("POST", "/v1/auth/sign-out"),
     ("POST", "/v1/auth/password-reset"),
     ("POST", "/v1/auth/resend-confirmation"),
+    ("GET", "/v1/auth/confirm-email"),
     ("POST", "/v1/auth/confirm-email"),
     ("PUT", "/v1/auth/password"),
     ("DELETE", "/v1/auth/account"),
@@ -53,6 +55,7 @@ ROUTE_TABLE = {
     ("PATCH", "/v1/spaces/{space_id}"),
     ("DELETE", "/v1/spaces/{space_id}"),
     ("GET", "/v1/memories"),
+    ("GET", "/v1/memory-tags"),
     ("POST", "/v1/memories"),
     ("GET", "/v1/memories/{memory_id}"),
     ("PATCH", "/v1/memories/{memory_id}"),
@@ -86,6 +89,7 @@ PROTECTED_ROUTES = [
     ("POST", f"/v1/uploads/{FAKE_ID}/complete"),
     ("POST", "/v1/memories"),
     ("GET", "/v1/memories"),
+    ("GET", "/v1/memory-tags"),
     ("GET", f"/v1/memories/{FAKE_ID}"),
     ("PATCH", f"/v1/memories/{FAKE_ID}"),
     ("DELETE", f"/v1/memories/{FAKE_ID}"),
@@ -98,7 +102,7 @@ PROTECTED_ROUTES = [
 
 
 class AsgiResult:
-    def __init__(self, status: int, headers: dict[bytes, bytes], body: str) -> None:
+    def __init__(self, status: int, headers: dict[bytes, bytes], body: bytes) -> None:
         self.status = status
         self.headers = headers
         self.body = body
@@ -150,7 +154,7 @@ async def asgi(
 
     await app(scope, receive, send)
     assert captured["status"] is not None
-    return AsgiResult(captured["status"], dict(captured["headers"]), captured["body"].decode())
+    return AsgiResult(captured["status"], dict(captured["headers"]), captured["body"])
 
 
 def mounted_routes() -> set[tuple[str, str]]:
@@ -172,6 +176,22 @@ async def test_liveness_answers_without_any_dependency() -> None:
     result = await asgi("GET", "/health/live")
     assert result.status == 200
     assert result.json == {"status": "ok"}
+
+
+async def test_trove_brand_image_is_publicly_available_for_email_templates() -> None:
+    result = await asgi("GET", "/brand/trove.png")
+
+    assert result.status == 200
+    assert dict(result.headers)[b"content-type"] == b"image/png"
+    assert result.body.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+async def test_email_confirmation_landing_page_uses_the_hosted_trove_logo() -> None:
+    result = await asgi("GET", "/v1/auth/confirm-email")
+
+    assert result.status == 200
+    assert b'src="/brand/trove.png" alt="Trove logo"' in result.body
+    assert b"img-src 'self'" in dict(result.headers)[b"content-security-policy"]
 
 
 async def test_readiness_reports_the_database_it_cannot_reach() -> None:
@@ -203,6 +223,7 @@ async def test_a_response_carries_the_security_headers_and_no_server_identity() 
     assert headers[b"x-content-type-options"] == b"nosniff"
     assert headers[b"x-frame-options"] == b"DENY"
     assert headers[b"referrer-policy"] == b"no-referrer"
+    assert len(headers[b"x-request-id"]) == 32
     assert b"server" not in headers
     assert b"x-powered-by" not in headers
 

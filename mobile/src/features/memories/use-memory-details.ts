@@ -93,6 +93,20 @@ export function useMemoryDetails({ memories, pendingMemories, upsertMemory, remo
     }
   }, [confirmMemory, showToast]);
 
+  const saveMemoryTags = useCallback(async (memory: Memory, tags: string[]) => {
+    if (memory.localPending) { showToast('Tags are available after this save syncs.'); return false; }
+    try {
+      const result = await patchMemory(memory.id, { tags });
+      await confirmMemory(result.memory);
+      await client.invalidateQueries({ queryKey: ['memory-tags'] });
+      showToast('Tags updated');
+      return true;
+    } catch (tagError) {
+      Alert.alert('Tags could not be saved', tagError instanceof Error ? tagError.message : 'Try again in a moment.');
+      return false;
+    }
+  }, [client, confirmMemory, showToast]);
+
   const deleteMemoryAction = useCallback(async (memory: Memory) => {
     if (memory.localPending) throw new Error('Wait for this save to sync before deleting it.');
     await deleteMemory(memory.id);
@@ -110,5 +124,5 @@ export function useMemoryDetails({ memories, pendingMemories, upsertMemory, remo
     router.back();
   }, [router]);
 
-  return { detailMemory, related, detailLoading, detailError, feedbackError: feedback.error, feedbackPendingId: feedback.pendingId, sendFeedback: feedback.submit, openMemory, loadMemoryDetails, toggleMemorySpace, saveMemoryNote, deleteMemoryAction, closeDetail };
+  return { detailMemory, related, detailLoading, detailError, feedbackError: feedback.error, feedbackPendingId: feedback.pendingId, sendFeedback: feedback.submit, openMemory, loadMemoryDetails, toggleMemorySpace, saveMemoryNote, saveMemoryTags, deleteMemoryAction, closeDetail };
 }

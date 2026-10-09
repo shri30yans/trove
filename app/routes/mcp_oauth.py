@@ -42,7 +42,9 @@ def _page(request: Request, template: str, status_code: int = 200, **context: An
 
 
 def _secure_cookie(request: Request) -> bool:
-    return get_config().RUN_ENV != "local" or request.url.scheme == "https"
+    """Cookies are Secure unless the request really is plain HTTP, which the config only permits
+    for a loopback MCP URL."""
+    return request.url.scheme == "https" or not get_config().policy.allow_plain_http
 
 
 def _set_csrf(response: Response, request: Request, token: str) -> None:

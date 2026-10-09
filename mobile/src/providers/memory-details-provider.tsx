@@ -25,9 +25,10 @@ export function MemoryDetailsProvider({ children }: { children: ReactNode }) {
     loadMemoryDetails: details.loadMemoryDetails,
     toggleMemorySpace: details.toggleMemorySpace,
     saveMemoryNote: details.saveMemoryNote,
+    saveMemoryTags: details.saveMemoryTags,
     closeDetail: details.closeDetail,
     deleteMemoryAction: details.deleteMemoryAction,
-  }), [details.sendFeedback, details.openMemory, details.loadMemoryDetails, details.toggleMemorySpace, details.saveMemoryNote, details.deleteMemoryAction, details.closeDetail]);
+  }), [details.sendFeedback, details.openMemory, details.loadMemoryDetails, details.toggleMemorySpace, details.saveMemoryNote, details.saveMemoryTags, details.deleteMemoryAction, details.closeDetail]);
 
   return <MemoryDetailsStateContext.Provider value={state}>
     <MemoryDetailsActionsContext.Provider value={actions}>{children}</MemoryDetailsActionsContext.Provider>

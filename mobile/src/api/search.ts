@@ -4,12 +4,14 @@ import { requestBody, parseRequest, idSchema } from './schemas/common';
 import { searchResponseSchema, relatedResponseSchema, feedbackRequestSchema, feedbackResponseSchema } from './schemas/search';
 import { memoryFiltersSchema, filterParams, validRange } from './memory-filters';
 
-const searchRequestSchema = memoryFiltersSchema.extend({ query: z.string().trim().min(1).max(1000), limit: z.number().int().min(1).max(50).optional() }).refine(validRange);
+const searchRequestSchema = memoryFiltersSchema.extend({ query: z.string().trim().max(1000), mode: z.enum(['hybrid', 'raw']).optional(), tag: z.string().trim().min(1).max(40).optional(), limit: z.number().int().min(1).max(50).optional() }).refine((options) => (!!options.query || !!options.tag) && validRange(options));
 export type MemorySearchOptions = z.infer<typeof searchRequestSchema>;
 export function searchMemories(options: MemorySearchOptions, signal?: AbortSignal) {
   const validated = parseRequest(searchRequestSchema, options);
   const params = filterParams(validated);
   params.set('q', validated.query); params.set('limit', String(validated.limit ?? 30));
+  if (validated.mode) params.set('mode', validated.mode);
+  if (validated.tag) params.set('tag', validated.tag.toLowerCase());
   return request(`/v1/search?${params.toString()}`, searchResponseSchema, { signal });
 }
 

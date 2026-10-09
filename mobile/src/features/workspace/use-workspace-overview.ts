@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getExplore, getUpdates } from '../../api/overview';
 import { getSpaces } from '../../api/spaces';
-import type { Space } from '../../types';
+import type { Space, WrittenSpace } from '../../types';
 
 /** Server reads own request state; confirmed creations survive older list responses. */
 export function useWorkspaceOverview() {
@@ -19,8 +19,10 @@ export function useWorkspaceOverview() {
     const ids = new Set(listed.map((space) => space.id));
     return [...listed, ...createdSpaces.filter((space) => !ids.has(space.id))];
   }, [spacesQuery.data, createdSpaces]);
-  const addSpace = useCallback((space: Space) => {
-    setCreatedSpaces((current) => [...current.filter((item) => item.id !== space.id), space]);
+  const addSpace = useCallback((space: WrittenSpace) => {
+    // A creation has nothing in it yet; the next list response replaces this with the joined count.
+    const listed: Space = { ...space, memoryCount: 0 };
+    setCreatedSpaces((current) => [...current.filter((item) => item.id !== listed.id), listed]);
   }, []);
   const { refetch: refetchSpaces } = spacesQuery;
   const { refetch: refetchExplore } = exploreQuery;

@@ -1,6 +1,7 @@
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { MemoryCard, StatePanel } from '../../components';
 import { DecorativeOrb } from '../../components/decorative-orb';
+import { memoryCountLabel } from '../../utils/memory-metadata';
 import { useThemedStyles, useTheme } from '../../providers/theme-provider';
 import { fonts, radii, spacing, text } from '../../theme';
 import type { Palette } from '../../theme';
@@ -15,7 +16,6 @@ export function MonthlyOverviewScreen({ monthDate, memories, totalCount, nextCur
   const monthOnly = new Intl.DateTimeFormat(undefined, { month: 'long', timeZone: 'UTC' }).format(month);
   const monthShortName = new Intl.DateTimeFormat(undefined, { month: 'short', timeZone: 'UTC' }).format(month);
   const kindNames: Record<Memory['kind'], string> = { link: 'link', image: 'photo', text: 'note', audio: 'audio file', video: 'video', file: 'file' };
-  const displayCount = totalCount ?? memories.length;
   const byKind = new Map<Memory['kind'], number>();
   memories.forEach((memory) => byKind.set(memory.kind, (byKind.get(memory.kind) || 0) + 1));
   const kindSummary = [...byKind.entries()].slice(0, 3).map(([kind, count]) => {
@@ -26,10 +26,10 @@ export function MonthlyOverviewScreen({ monthDate, memories, totalCount, nextCur
   return <>
     <View style={styles.monthHero}>
       <View style={styles.monthHeroArtwork}><DecorativeOrb seed={`monthly-overview-${monthDate}`} size={82} color={colors.lavender} /><Text style={styles.monthHeroDay}>{monthShortName.toUpperCase()}</Text><Text style={styles.monthHeroNumber}>{month.getUTCFullYear()}</Text></View>
-      <View style={styles.monthHeroCopy}><Text style={styles.monthTitle}>{monthName}</Text><Text style={styles.monthCount}>{loading ? 'Gathering your memories…' : error ? 'Could not load this month' : `${displayCount} ${displayCount === 1 ? 'memory' : 'memories'} saved`}</Text>{!loading && !error && !nextCursor && kindSummary ? <Text style={styles.kindSummary}>{kindSummary}</Text> : null}</View>
+      <View style={styles.monthHeroCopy}><Text style={styles.monthTitle}>{monthName}</Text><Text style={styles.monthCount}>{loading ? 'Gathering your memories…' : error ? 'Could not load this month' : totalCount === undefined ? 'Memories from this month' : `${memoryCountLabel(totalCount)} saved`}</Text>{!loading && !error && !nextCursor && kindSummary ? <Text style={styles.kindSummary}>{kindSummary}</Text> : null}</View>
     </View>
 
-    <View style={styles.sectionHeader}><View><Text style={styles.sectionTitle}>Moments from {monthOnly}</Text><Text style={styles.sectionHint}>{!loading && displayCount > memories.length ? `Swipe to browse · ${memories.length} of ${displayCount} loaded` : 'Swipe to browse this month'}</Text></View><View style={styles.countBadge}><Text style={styles.countBadgeText}>{displayCount}</Text></View></View>
+    <View style={styles.sectionHeader}><View><Text style={styles.sectionTitle}>Moments from {monthOnly}</Text><Text style={styles.sectionHint}>{!loading && totalCount !== undefined && totalCount > memories.length ? `Swipe to browse · ${memories.length} of ${totalCount} loaded` : 'Swipe to browse this month'}</Text></View><View style={styles.countBadge}><Text style={styles.countBadgeText}>{totalCount ?? memories.length}</Text></View></View>
     {loading && memories.length === 0 ? <View style={styles.loadingPanel}><ActivityIndicator color={colors.blueDeep} /></View>
       : memories.length ? <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} decelerationRate="fast" contentContainerStyle={styles.memoryRail}>
         {memories.slice(0, 12).map((memory) => <MemoryCard key={memory.id} memory={memory} onPress={() => onOpenMemory(memory)} />)}

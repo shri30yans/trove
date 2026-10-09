@@ -2,12 +2,15 @@ import datetime as dt
 import uuid
 from unittest.mock import AsyncMock
 
-from app.routes import memories
+from app import memory_reads
+from app.serialize import MemoryAsset, MemoryListPage
 
 USER = uuid.UUID("00000000-0000-4000-8000-000000000001")
 MEMORY = uuid.UUID("00000000-0000-4000-8000-000000000002")
 ASSET = uuid.UUID("00000000-0000-4000-8000-000000000003")
 NOW = dt.datetime(2026, 10, 7, tzinfo=dt.UTC)
+# What Postgres itself renders for a timestamp inside json_build_object, verified against the live pooler.
+JSON_STAMP = "2026-10-07T00:00:00.000000+00:00"
 
 
 async def test_memory_detail_reads_assets_and_records_open_in_one_database_round_trip(monkeypatch):
@@ -30,6 +33,7 @@ async def test_memory_detail_reads_assets_and_records_open_in_one_database_round
         "created_at": NOW,
         "updated_at": NOW,
         "spaces": [],
+        "tags": ["synthetic"],
         "assets": [
             {
                 "id": ASSET,
@@ -37,17 +41,17 @@ async def test_memory_detail_reads_assets_and_records_open_in_one_database_round
                 "mimeType": "text/plain",
                 "byteSize": 16,
                 "status": "attached",
-                "createdAt": NOW,
+                "createdAt": JSON_STAMP,
                 "role": "attachment",
             }
         ],
     }
     fetchrow = AsyncMock(return_value=row)
     fetch = AsyncMock()
-    monkeypatch.setattr(memories, "fetchrow", fetchrow)
-    monkeypatch.setattr(memories, "fetch", fetch)
+    monkeypatch.setattr(memory_reads, "fetchrow", fetchrow)
+    monkeypatch.setattr(memory_reads, "fetch", fetch)
 
-    result = await memories._get_memory(USER, MEMORY, record_opened=True)
+    result = await memory_reads.read_memory(USER, MEMORY, record_opened=True)
 
     assert fetchrow.await_count == 1
     query, memory_id, user_id, record_opened = fetchrow.call_args.args
@@ -59,26 +63,25 @@ async def test_memory_detail_reads_assets_and_records_open_in_one_database_round
     assert "INSERT INTO memory_events" in query
     assert "FROM memory_assets ma JOIN assets a" in query
     fetch.assert_not_awaited()
-    assert result is not None
-    assert result["assets"] == [
-        {
-            "id": str(ASSET),
-            "filename": "synthetic.txt",
-            "mimeType": "text/plain",
-            "byteSize": 16,
-            "status": "attached",
-            "createdAt": NOW,
-            "role": "attachment",
-            "url": f"/v1/assets/{ASSET}/content",
-        }
+    assert result.assets == [
+        MemoryAsset(
+            id=str(ASSET),
+            filename="synthetic.txt",
+            mimeType="text/plain",
+            byteSize=16,
+            status="attached",
+            role="attachment",
+            createdAt=JSON_STAMP,
+            url=f"/v1/assets/{ASSET}/content",
+        )
     ]
 
 
 async def test_memory_detail_query_does_not_record_open_for_non_open_callers(monkeypatch):
     fetchrow = AsyncMock(return_value=None)
-    monkeypatch.setattr(memories, "fetchrow", fetchrow)
+    monkeypatch.setattr(memory_reads, "fetchrow", fetchrow)
 
-    result = await memories._get_memory(USER, MEMORY)
+    result = await memory_reads.read_memory(USER, MEMORY)
 
     assert result is None
     query, _, _, record_opened = fetchrow.call_args.args
@@ -109,14 +112,15 @@ async def test_mcp_memory_detail_reads_without_recording_an_open(monkeypatch):
             "created_at": NOW,
             "updated_at": NOW,
             "spaces": [],
+            "tags": [],
             "assets": [],
         }
     )
-    monkeypatch.setattr(memories, "fetchrow", fetchrow)
+    monkeypatch.setattr(memory_reads, "fetchrow", fetchrow)
 
-    result = await memories.get_memory_detail(str(MEMORY), Principal(id=str(USER), subject="synthetic"))
+    result = await memory_reads.get_memory_detail(str(MEMORY), Principal(id=str(USER), subject="synthetic"))
 
-    assert result["id"] == str(MEMORY)
+    assert result.id == str(MEMORY)
     query, _, _, record_opened = fetchrow.call_args.args
     assert record_opened is False
     assert "UPDATE memories" in query
@@ -127,14 +131,14 @@ async def test_memory_list_service_accepts_plain_query_values(monkeypatch):
     from app.auth import Principal
 
     fetch = AsyncMock(return_value=[])
-    monkeypatch.setattr(memories, "fetch", fetch)
+    monkeypatch.setattr(memory_reads, "fetch", fetch)
 
-    result = await memories.list_memories_for_user(
+    result = await memory_reads.list_memories_for_user(
         Principal(id=str(USER), subject="synthetic"),
         {"limit": "4", "spaceId": str(MEMORY), "kind": "text"},
     )
 
-    assert result == {"memories": [], "nextCursor": None}
+    assert result == MemoryListPage(memories=[], nextCursor=None)
     assert fetch.await_args.args[1] == USER
     assert fetch.await_args.args[2] == "text"
     assert fetch.await_args.args[3] == MEMORY

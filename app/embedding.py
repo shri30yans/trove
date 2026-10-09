@@ -12,10 +12,11 @@ from dataclasses import dataclass
 
 import httpx
 
-from app.config import get_config
+from app.config import VertexConfig, get_config
 from app.vertex_auth import VertexCredentialError, vertex_auth
 
-MODEL_ID = "google/gemini-embedding-2"
+MODEL_NAME = "gemini-embedding-2"
+MODEL_ID = f"google/{MODEL_NAME}"
 MODEL_REVISION = "provider-managed"
 EMBEDDING_DIMENSIONS = 768
 EMBEDDING_SPACE_ID = f"{MODEL_ID}-{EMBEDDING_DIMENSIONS}d@{MODEL_REVISION}"
@@ -72,19 +73,14 @@ class EmbeddingService:
 
     @property
     def ready(self) -> bool:
-        config = get_config()
-        has_credentials = bool(config.VERTEX_SERVICE_ACCOUNT_JSON_B64 or config.GOOGLE_APPLICATION_CREDENTIALS)
-        return bool(has_credentials and config.VERTEX_PROJECT_ID and config.VERTEX_LOCATION)
+        return get_config().vertex is not None
 
-    @property
-    def embeddings_url(self) -> str:
-        config = get_config()
-        if not config.VERTEX_PROJECT_ID or not config.VERTEX_LOCATION:
-            raise PermanentEmbeddingError("Vertex AI embeddings require a project ID and location.")
+    @staticmethod
+    def _url(vertex: VertexConfig) -> str:
         return (
             "https://aiplatform.googleapis.com/v1/projects/"
-            f"{config.VERTEX_PROJECT_ID}/locations/{config.VERTEX_LOCATION}/publishers/google/"
-            "models/gemini-embedding-2:embedContent"
+            f"{vertex.project_id}/locations/{vertex.location}/publishers/google/"
+            f"models/{MODEL_NAME}:embedContent"
         )
 
     @property
@@ -101,17 +97,11 @@ class EmbeddingService:
             "imageRevision": MODELS.image_revision,
             "configurationError": None
             if configured
-            else "Vertex AI embedding credentials or project configuration are missing",
+            else "Vertex AI embeddings need VERTEX_PROJECT_ID and VERTEX_SERVICE_ACCOUNT_JSON_B64",
         }
 
     def models(self) -> ModelSet | None:
         return MODELS if self.ready else None
-
-    def is_ready(self) -> bool:
-        return self.ready
-
-    def start(self) -> None:
-        """Keep the existing lifecycle hook; the API client is created lazily on first use."""
 
     async def stop(self) -> None:
         if self._client is not None:
@@ -181,12 +171,12 @@ class EmbeddingService:
         )
 
     async def _request_vector(self, request_input: dict[str, object], *, modality: str) -> list[float]:
-        config = get_config()
-        if not (config.VERTEX_SERVICE_ACCOUNT_JSON_B64 or config.GOOGLE_APPLICATION_CREDENTIALS):
+        vertex = get_config().vertex
+        if vertex is None:
             raise PermanentEmbeddingError("Vertex AI embeddings are not configured on the Trove API.")
 
         try:
-            access_token = await vertex_auth.access_token()
+            access_token = await vertex_auth.access_token(vertex)
         except VertexCredentialError as error:
             raise PermanentEmbeddingError("Vertex AI OAuth credentials could not be loaded.") from error
 
@@ -194,7 +184,7 @@ class EmbeddingService:
         started_at = time.perf_counter()
         try:
             response = await client.post(
-                self.embeddings_url,
+                self._url(vertex),
                 headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
                 json={
                     "outputDimensionality": EMBEDDING_DIMENSIONS,

@@ -1,7 +1,7 @@
 import { ApiError, request } from './client';
 import { z } from 'zod';
 import { emptyResponseSchema, requestBody, parseRequest, idSchema } from './schemas/common';
-import { memoryListResponseSchema, memoryResponseSchema, memoryPatchSchema, moveMemoryRequestSchema, processingResponseSchema, type MemoryPatch } from './schemas/memories';
+import { memoryListResponseSchema, memoryResponseSchema, memoryPatchSchema, moveMemoryRequestSchema, processingResponseSchema, memoryTagsResponseSchema, type MemoryPatch } from './schemas/memories';
 import type { Memory } from '../types';
 import { memoryFiltersSchema, filterParams, validRange } from './memory-filters';
 
@@ -30,6 +30,13 @@ export async function getAllMemories() {
 
 export function getProcessingSummary(signal?: AbortSignal) {
   return request('/v1/processing', processingResponseSchema, { signal });
+}
+
+export function getMemoryTags(search = '', signal?: AbortSignal) {
+  const query = z.string().trim().max(40).parse(search).toLowerCase();
+  const params = new URLSearchParams();
+  if (query) params.set('q', query);
+  return request(`/v1/memory-tags?${params.toString()}`, memoryTagsResponseSchema, { signal });
 }
 
 export async function getMemory(id: string, signal?: AbortSignal) {

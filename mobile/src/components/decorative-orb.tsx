@@ -3,8 +3,8 @@ import { View } from 'react-native';
 
 type DecorativeOrbProps = {
   seed: string | number;
+  color: string;
   size?: number;
-  color?: string;
   placement?: number;
   style?: ViewStyle;
 };
@@ -30,7 +30,7 @@ function stableHash(value: string | number) {
 }
 
 /** A softly cropped circle with a repeatable, card-specific placement. */
-export function DecorativeOrb({ seed, size = 90, color = 'rgba(255,255,255,0.36)', placement, style }: DecorativeOrbProps) {
+export function DecorativeOrb({ seed, color, size = 90, placement, style }: DecorativeOrbProps) {
   const hash = stableHash(seed);
   const diameter = Math.round(size * (0.84 + (hash % 4) * 0.08));
   const anchorIndex = placement ?? (hash >>> 3);

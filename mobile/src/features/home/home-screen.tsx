@@ -3,16 +3,16 @@ import { useEffect, useState } from 'react';
 import { Animated, Easing, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { ErrorNotice, IconBadge, LoadMoreButton, MemoryRow, SectionHeading, StatePanel, Wordmark } from '../../components';
-import { kindIcons, memoryTitle, shortDate } from '../../utils/memory-metadata';
+import { kindIcons, memoryCountLabel, memoryTitle, shortDate } from '../../utils/memory-metadata';
 import { useThemedStyles, useTheme } from '../../providers/theme-provider';
-import { iconBadge, layout, radii, screenInsets, spacing, text, type Palette } from '../../theme';
+import { collectionTints, iconBadge, layout, radii, screenInsets, spacing, text, type Palette } from '../../theme';
 import type { Memory, ResurfacingUpdate, Space } from '../../types';
 
 export function HomeScreen({ memories, spaces, updates, hasMoreMemories, loadingMoreMemories, loading, refreshing, error, onOpenProfile, onOpenMemory, onLoadMore, onSearch, onOpenSpaces, onOpenSpace, onCreateSpace, onRefresh }:
   { memories: Memory[]; spaces: Space[]; updates: ResurfacingUpdate[]; hasMoreMemories: boolean; loadingMoreMemories: boolean; loading: boolean; refreshing: boolean; error: string | null; onOpenProfile: () => void; onOpenMemory: (memory: Memory) => void; onLoadMore: () => void; onSearch: (query: string, kind?: string) => void; onOpenSpaces: () => void; onOpenSpace: (id: string) => void; onCreateSpace: () => void; onRefresh: () => void }) {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const interestTints = [colors.petal, colors.icyBlue, colors.lavender, colors.greenTint];
+  const tints = collectionTints(colors);
   const [heroSlot] = useState(initialHeroSlot);
 
   return <FlatList
@@ -40,9 +40,9 @@ export function HomeScreen({ memories, spaces, updates, hasMoreMemories, loading
 
     <View style={styles.homeSection}>
       <SectionHeading title="Your Spaces" action={spaces.length ? 'See all' : undefined} onAction={onOpenSpaces} style={styles.sectionGap} />
-      {spaces.length ? <View style={styles.homeSpaceGrid}>{spaces.slice(0, 2).map((space, index) => <Pressable key={space.id} onPress={() => onOpenSpace(space.id)} style={({ pressed }) => [styles.homeSpaceCard, { backgroundColor: space.color || interestTints[index % interestTints.length] }, pressed && styles.pressed]} accessibilityRole="button" accessibilityLabel={`${space.name}, ${space.memoryCount ?? 0} saved memories`}>
+      {spaces.length ? <View style={styles.homeSpaceGrid}>{spaces.slice(0, 2).map((space, index) => <Pressable key={space.id} onPress={() => onOpenSpace(space.id)} style={({ pressed }) => [styles.homeSpaceCard, { backgroundColor: space.color || tints[index % tints.length] }, pressed && styles.pressed]} accessibilityRole="button" accessibilityLabel={`${space.name}, ${memoryCountLabel(space.memoryCount)}`}>
         <View style={styles.homeSpaceTop}><Ionicons name="albums-outline" size={16} color={colors.foreground} /></View>
-        <Text numberOfLines={1} style={styles.homeSpaceName}>{space.name}</Text><Text style={styles.homeSpaceCount}>{space.memoryCount ?? 0} {(space.memoryCount ?? 0) === 1 ? 'memory' : 'memories'}</Text>
+        <Text numberOfLines={1} style={styles.homeSpaceName}>{space.name}</Text><Text style={styles.homeSpaceCount}>{memoryCountLabel(space.memoryCount)}</Text>
       </Pressable>)}
         <Pressable onPress={onCreateSpace} style={({ pressed }) => [styles.homeSpaceCreate, pressed && styles.pressed]} accessibilityRole="button" accessibilityLabel="Create a Space"><Ionicons name="add" size={19} color={colors.foreground} /><Text style={styles.homeSpaceCreateText}>New Space</Text></Pressable>
       </View> : <Pressable onPress={onCreateSpace} style={({ pressed }) => [styles.firstSpaceCard, pressed && styles.pressed]} accessibilityRole="button" accessibilityLabel="Create a Space"><IconBadge icon="albums-outline" /><View style={{ flex: 1 }}><Text style={styles.firstSpaceTitle}>Start with a Space</Text><Text style={styles.sectionHint}>Projects, interests, plans, or anything you want to keep together.</Text></View><Ionicons name="arrow-forward" size={16} color={colors.foreground} /></Pressable>}

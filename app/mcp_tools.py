@@ -14,7 +14,8 @@ from pydantic import Field
 from app import supabase_auth
 from app.errors import ApiError, dump_json
 from app.mcp_auth import current_principal, oauth_client_id
-from app.routes import memories, search, spaces
+from app.memory_reads import get_memory_detail, list_memories_for_user
+from app.routes import search, spaces
 from app.schemas import UpdateSpaceRequest
 
 _Result = TypeVar("_Result")
@@ -28,8 +29,12 @@ async def _trove_result(operation: Awaitable[_Result]) -> _Result:
         raise ValueError(error.message) from error
 
 
-def _serialize_tool_result(payload: dict[str, Any]) -> dict[str, Any]:
-    """Apply Trove's ISO timestamp and UUID wire encoding to MCP structured results."""
+def _serialize_tool_result(payload: object) -> dict[str, Any]:
+    """Apply Trove's ISO timestamp and UUID wire encoding to MCP structured results.
+
+    Every result crosses through the API's own encoder, so a tool cannot present a Memory differently
+    from the route that serves it. Trimming happens after this step because the models are immutable.
+    """
     return json.loads(dump_json(payload))
 
 
@@ -78,9 +83,9 @@ def register_tools(server: FastMCP) -> None:
         if cursor:
             values["cursor"] = cursor
         principal = await current_principal()
-        payload = await _trove_result(memories.list_memories_for_user(principal, values))
+        payload = _serialize_tool_result(await _trove_result(list_memories_for_user(principal, values)))
         payload["memories"] = [_note_summary(note) for note in payload["memories"]]
-        return _serialize_tool_result(payload)
+        return payload
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
     async def search_notes(
@@ -93,24 +98,26 @@ def register_tools(server: FastMCP) -> None:
         if space_id:
             values["spaceId"] = space_id
         principal = await current_principal()
-        payload = await _trove_result(search.search_memories_for_user(principal, values))
+        payload = _serialize_tool_result(await _trove_result(search.search_memories_for_user(principal, values)))
         payload["memories"] = [_note_summary(note) for note in payload["memories"]]
-        return _serialize_tool_result(payload)
+        return payload
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
     async def get_note(note_id: str) -> dict[str, Any]:
         """Fetch one note without recording an in-app open event."""
         principal = await current_principal()
-        note = await _trove_result(memories.get_memory_detail(note_id, principal))
+        detail = await _trove_result(get_memory_detail(note_id, principal))
+        payload = _serialize_tool_result({"memory": detail})
+        note = payload["memory"]
         content_limit = 12_000
         for field in ("contentText", "pageText"):
-            value = note.get(field)
+            value = note[field]
             if isinstance(value, str) and len(value) > content_limit:
                 note[field] = value[:content_limit]
                 note[f"{field}Truncated"] = True
-        for asset in note.get("assets", []):
-            asset.pop("url", None)
-        return _serialize_tool_result({"memory": note})
+        for asset in note["assets"]:
+            asset.pop("url")
+        return payload
 
     @server.tool(
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)

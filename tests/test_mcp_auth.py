@@ -4,21 +4,11 @@ from unittest.mock import AsyncMock
 
 from app import mcp_auth
 from app.config import Config
+from tests.config_fixture import synthetic_config
 
 
 def _config() -> Config:
-    return Config(
-        RUN_ENV="local",
-        DATABASE_URL="postgresql://127.0.0.1:5432/trove_test",
-        S3_ENDPOINT="http://127.0.0.1:54321",
-        S3_REGION="local",
-        S3_BUCKET="trove-private",
-        S3_ACCESS_KEY="test",
-        S3_SECRET_KEY="test",
-        AUTH_JWKS_URL="https://trove.example.test/.well-known/jwks.json",
-        AUTH_ISSUER="https://trove.example.test",
-        MCP_PUBLIC_URL="https://api.trove.example.test/mcp",
-    )
+    return synthetic_config(MCP_PUBLIC_URL="https://api.trove.example.test/mcp")
 
 
 async def test_verifier_requires_mcp_audience_and_preserves_oauth_client_and_user(

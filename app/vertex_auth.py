@@ -8,12 +8,11 @@ import binascii
 import json
 from typing import Any
 
-import google.auth
 from google.auth.credentials import Credentials
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 
-from app.config import get_config
+from app.config import VertexConfig
 
 SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
 
@@ -27,11 +26,11 @@ class VertexAuth:
         self._credentials: Credentials | None = None
         self._lock = asyncio.Lock()
 
-    async def access_token(self) -> str:
+    async def access_token(self, vertex: VertexConfig) -> str:
         async with self._lock:
             try:
                 if self._credentials is None:
-                    self._credentials = await asyncio.to_thread(self._load_credentials)
+                    self._credentials = await asyncio.to_thread(self._load_credentials, vertex)
                 credentials = self._credentials
                 if not credentials.valid:
                     await asyncio.to_thread(credentials.refresh, Request())
@@ -44,27 +43,19 @@ class VertexAuth:
                 raise VertexCredentialError("Vertex AI OAuth credentials could not be loaded or refreshed.") from error
 
     @staticmethod
-    def _load_credentials() -> Credentials:
-        config = get_config()
-        encoded_service_account = config.VERTEX_SERVICE_ACCOUNT_JSON_B64
-        if encoded_service_account:
-            try:
-                service_account_info: Any = json.loads(
-                    base64.b64decode(encoded_service_account, validate=True).decode("utf-8")
-                )
-            except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError) as error:
-                raise VertexCredentialError(
-                    "VERTEX_SERVICE_ACCOUNT_JSON_B64 is not valid base64-encoded JSON."
-                ) from error
-            if not isinstance(service_account_info, dict):
-                raise VertexCredentialError("Vertex service account JSON must be an object.")
-            return service_account.Credentials.from_service_account_info(
-                service_account_info,
-                scopes=SCOPES,
+    def _load_credentials(vertex: VertexConfig) -> Credentials:
+        try:
+            service_account_info: Any = json.loads(
+                base64.b64decode(vertex.service_account_json_b64, validate=True).decode("utf-8")
             )
-
-        credentials, _ = google.auth.default(scopes=SCOPES)
-        return credentials
+        except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise VertexCredentialError("VERTEX_SERVICE_ACCOUNT_JSON_B64 is not valid base64-encoded JSON.") from error
+        if not isinstance(service_account_info, dict):
+            raise VertexCredentialError("Vertex service account JSON must be an object.")
+        return service_account.Credentials.from_service_account_info(
+            service_account_info,
+            scopes=SCOPES,
+        )
 
 
 vertex_auth = VertexAuth()
