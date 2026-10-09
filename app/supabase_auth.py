@@ -60,7 +60,10 @@ def _email_failure(response: httpx.Response) -> bool:
     return "email" in text and any(needle in text for needle in ("rate limit", "sending", "send"))
 
 
-CONFIRM_EMAIL_REDIRECT = "trove://confirm-email"
+def confirmation_redirect_url() -> str:
+    """Return the public Trove landing page used after Supabase verifies signup email."""
+    api_base = get_config().MCP_PUBLIC_URL.rstrip("/").removesuffix("/mcp")
+    return f"{api_base}/v1/auth/confirm-email"
 
 
 def _provider_error(response: httpx.Response, *, operation: str) -> ApiError:
@@ -126,10 +129,10 @@ async def sign_in(email: str, password: str) -> dict[str, Any]:
 async def sign_up(email: str, password: str) -> dict[str, Any]:
     """Create an email/password account; Supabase may require email confirmation first.
 
-    The confirmation link deep-links back to the app so tapping it opens the
-    in-app confirmation screen instead of the marketing site.
+    Supabase verifies the link, then returns to the Trove HTTPS landing page.
+    That page hands a validated session to the app or explains how to sign in.
     """
-    redirect_to = quote(CONFIRM_EMAIL_REDIRECT, safe="")
+    redirect_to = quote(confirmation_redirect_url(), safe="")
     response = await _post(f"signup?redirect_to={redirect_to}", {"email": email, "password": password})
     if not response.is_success:
         raise _provider_error(response, operation="sign_up")
@@ -148,7 +151,7 @@ async def resend_confirmation(email: str) -> None:
     already confirmed, or otherwise rejected) so the route can answer neutrally
     instead of leaking which addresses are registered.
     """
-    redirect_to = quote(CONFIRM_EMAIL_REDIRECT, safe="")
+    redirect_to = quote(confirmation_redirect_url(), safe="")
     response = await _post(f"resend?redirect_to={redirect_to}", {"type": "signup", "email": email})
     if response.is_success:
         return
@@ -157,11 +160,16 @@ async def resend_confirmation(email: str) -> None:
     raise _provider_error(response, operation="resend_confirmation")
 
 
-async def confirm_email(token_hash: str) -> None:
-    """Confirm a signup email link the app received on its deep-link route."""
+async def confirm_email(token_hash: str) -> dict[str, Any]:
+    """Exchange a signup token hash; return a session when Supabase issues one."""
     response = await _post("verify", {"type": "signup", "token_hash": token_hash})
     if response.is_success:
-        return
+        payload = _json(response)
+        if not isinstance(payload, dict):
+            raise ApiError(503, "auth_provider_error", "The sign-in service returned an invalid response.")
+        if payload.get("access_token") is not None or payload.get("refresh_token") is not None:
+            return {"status": "authenticated", "session": _session(payload)}
+        return {"status": "email_confirmed"}
     if response.status_code in (400, 401, 403, 422):
         try:
             body = response.json()

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Confirm your Trove account</title>
+  <style>
+    :root { color-scheme: light; font-family: Arial, Helvetica, sans-serif; color: #292631; background: #f4f2ef; }
+    body { box-sizing: border-box; min-height: 100vh; margin: 0; padding: 32px 16px; display: grid; place-items: center; }
+    main { box-sizing: border-box; width: min(100%, 440px); padding: 32px; border: 1px solid #e9e5e0; border-radius: 16px; background: #fff; }
+    h1 { margin: 0 0 12px; font-family: Georgia, serif; font-size: 26px; font-weight: 600; }
+    p { margin: 0 0 20px; color: #4a4858; font-size: 15px; line-height: 1.55; }
+    .brand { margin-bottom: 12px; color: #6b4fa0; font-weight: 700; letter-spacing: 0.04em; }
+    a { display: inline-block; padding: 13px 20px; border-radius: 8px; background: #6b4fa0; color: #fff; font-weight: 600; text-decoration: none; }
+    a:focus-visible { outline: 3px solid #292631; outline-offset: 3px; }
+    #open-app[hidden] { display: none; }
+    #fallback { margin-top: 18px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="brand">Trove</p>
+    <h1 id="title">Checking your confirmation</h1>
+    <p id="message" aria-live="polite">Please wait while we check the result.</p>
+    <a id="open-app" href="trove://confirm-email" hidden>Open Trove</a>
+    <p id="fallback" hidden>If Trove does not open, return to the app and sign in with your email and password.</p>
+  </main>
+  <script nonce="{{ script_nonce }}">
+    (() => {
+      const title = document.getElementById('title');
+      const message = document.getElementById('message');
+      const openApp = document.getElementById('open-app');
+      const fallback = document.getElementById('fallback');
+      const fragment = new URLSearchParams(window.location.hash.slice(1));
+      const query = new URLSearchParams(window.location.search);
+      const value = (key) => fragment.get(key) || query.get(key);
+      const error = value('error_description') || value('error_code') || value('error');
+      const accessToken = value('access_token');
+      const refreshToken = value('refresh_token');
+      const expiresIn = Number(value('expires_in'));
+      const isSignup = value('type') === 'signup';
+      const isBearer = value('token_type')?.toLowerCase() === 'bearer';
+
+      if (error) {
+        title.textContent = 'Confirmation link unavailable';
+        message.textContent = /expir/i.test(error)
+          ? 'This confirmation link has expired. Return to Trove and request a new one.'
+          : 'This confirmation link could not be verified. Return to Trove and request a new one.';
+        return;
+      }
+      if (!isSignup || !isBearer || !accessToken || !refreshToken || !Number.isInteger(expiresIn) || expiresIn <= 0) {
+        title.textContent = 'Confirmation could not be checked';
+        message.textContent = 'Return to Trove and sign in if you already confirmed your email, or request a new link.';
+        return;
+      }
+
+      title.textContent = 'Email confirmed';
+      message.textContent = 'Your email is confirmed. Open Trove to finish signing in.';
+      const callback = new URLSearchParams({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        expires_in: String(expiresIn),
+        token_type: 'bearer',
+        type: 'signup',
+      });
+      openApp.href = `trove://confirm-email#${callback.toString()}`;
+      openApp.hidden = false;
+      fallback.hidden = false;
+    })();
+  </script>
+</body>
+</html>

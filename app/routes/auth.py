@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import secrets
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, Request
 from starlette.responses import Response
+from starlette.templating import Jinja2Templates
 
 from app import supabase_auth
 from app.account_deletion import account_deletion_status, cancel_account_deletion, request_account_deletion
@@ -20,6 +24,22 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/auth")
+_TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates" / "auth"))
+
+
+@router.get("/confirm-email", include_in_schema=False)
+async def confirm_email_landing(request: Request) -> Response:
+    """Show a browser fallback after Supabase verifies an email confirmation link."""
+    nonce = secrets.token_urlsafe(24)
+    response = _TEMPLATES.TemplateResponse(request, "confirm_email.html", {"script_nonce": nonce})
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Content-Security-Policy"] = (
+        f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline'; "
+        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    )
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @router.post("/sign-in")
@@ -58,8 +78,7 @@ async def confirm_email(request: Request) -> ApiJSONResponse:
     payload = await parse_body(
         ConfirmEmailRequest, request, "invalid_auth_request", "This confirmation link is invalid. Request a new one."
     )
-    await supabase_auth.confirm_email(payload.token_hash)
-    return ApiJSONResponse(content={"status": "email_confirmed"})
+    return ApiJSONResponse(content=await supabase_auth.confirm_email(payload.token_hash))
 
 
 @router.post("/password-reset")
