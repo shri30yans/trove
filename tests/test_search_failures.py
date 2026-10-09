@@ -47,6 +47,40 @@ async def test_search_service_accepts_plain_query_values(monkeypatch):
     assert fetch.await_args.args[-1] == 3
 
 
+async def test_hybrid_search_ranks_vector_and_text_hits_in_one_database_call(monkeypatch):
+    from app.auth import Principal
+    from app.domain.retrieval import candidate_limit_for
+    from app.embedding import Embedding
+
+    embedding = Embedding(
+        modality="text",
+        space_id="synthetic-space",
+        model_id="synthetic-model",
+        model_revision="synthetic-revision",
+        vector=[0.25] * 768,
+    )
+    monkeypatch.setattr(search, "_embeddings_enabled_for_user", AsyncMock(return_value=True))
+    monkeypatch.setattr(search.embeddings, "embed_text", AsyncMock(return_value=embedding))
+    fetch = AsyncMock(return_value=[])
+    monkeypatch.setattr(search, "fetch", fetch)
+
+    result = await search.search_memories_for_user(
+        Principal(id="00000000-0000-4000-8000-000000000001", subject="synthetic"), {"q": "project ideas"}
+    )
+
+    assert result.semanticSearch is True
+    fetch.assert_awaited_once()
+    sql = fetch.await_args.args[0]
+    assert "vector_memory_hits AS" in sql
+    assert "semantic_hits AS" in sql
+    assert "row_number() OVER (ORDER BY lexical_score DESC" in sql
+    assert fetch.await_args.args[-3:] == (
+        "[" + ",".join(["0.25"] * 768) + "]",
+        "synthetic-space",
+        candidate_limit_for(20),
+    )
+
+
 async def test_raw_search_skips_embeddings_and_scopes_tag_filter(monkeypatch):
     from app.auth import Principal
 
@@ -63,8 +97,9 @@ async def test_raw_search_skips_embeddings_and_scopes_tag_filter(monkeypatch):
     assert result.semanticSearch is False
     enabled.assert_not_awaited()
     assert fetch.await_args.args[-2:] == ("reading", 3)
-    assert "mt.tag=$10" in fetch.await_args.args[0]
-    assert "LIMIT $11" in fetch.await_args.args[0]
+    assert "mt.tag=$8" in fetch.await_args.args[0]
+    assert "LIMIT $9" in fetch.await_args.args[0]
+    assert "ORDER BY e.embedding <=>" not in fetch.await_args.args[0]
 
 
 async def test_tag_only_search_lists_all_memories_with_tag_without_embedding(monkeypatch):

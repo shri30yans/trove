@@ -16,7 +16,6 @@ from app.domain.retrieval import (
     RESURFACING_POOL,
     RESURFACING_REOPEN_DAYS,
     RESURFACING_WINDOW_DAYS,
-    candidate_limit_for,
 )
 from app.embedding import Embedding, vector_literal
 
@@ -75,68 +74,6 @@ async def _vector_query(sql: str, args: Sequence[Any]) -> list[dict[str, Any]]:
     # HNSW settings are installed when each pooled session is initialized. One fetch keeps the
     # vector query to a single database round trip instead of wrapping SET LOCAL in a transaction.
     return await fetch(sql, *args)
-
-
-async def find_semantic_memories(
-    user_id: str,
-    embedding: Embedding,
-    limit: int,
-    kind: str | None = None,
-    space_id: str | None = None,
-    source_domain: str | None = None,
-    after: Any = None,
-    before: Any = None,
-) -> list[dict[str, float | str]]:
-    rows = await _vector_query(
-        """WITH eligible_memories AS (
-             SELECT m.id FROM memories m
-             WHERE m.user_id=$1 AND m.deleted_at IS NULL
-               AND ($4::text IS NULL OR m.kind::text=$4)
-               AND ($5::uuid IS NULL OR EXISTS (
-                 SELECT 1 FROM memory_spaces ms WHERE ms.memory_id=m.id AND ms.space_id=$5 AND ms.user_id=m.user_id
-               ))
-               AND ($6::text IS NULL OR m.source_domain=$6)
-               AND ($7::timestamptz IS NULL OR m.captured_at >= $7::timestamptz)
-               AND ($8::timestamptz IS NULL OR m.captured_at < $8::timestamptz)
-           ), eligible_assets AS (
-             SELECT DISTINCT ma.asset_id FROM memory_assets ma
-             JOIN eligible_memories em ON em.id=ma.memory_id
-             WHERE ma.user_id=$1
-           ), vector_hits AS (
-             SELECT e.memory_id,e.asset_id,1-(e.embedding <=> $3::vector) AS similarity
-             FROM embeddings e
-             WHERE e.user_id=$1 AND e.embedding_space=$2
-               AND (e.memory_id IN (SELECT id FROM eligible_memories)
-                 OR e.asset_id IN (SELECT asset_id FROM eligible_assets))
-             ORDER BY e.embedding <=> $3::vector
-             LIMIT $9
-           ), memory_hits AS (
-             SELECT vh.memory_id,vh.similarity FROM vector_hits vh WHERE vh.memory_id IS NOT NULL
-             UNION ALL
-             SELECT ma.memory_id,vh.similarity FROM vector_hits vh
-             JOIN memory_assets ma ON ma.asset_id=vh.asset_id AND ma.user_id=$1
-             WHERE vh.asset_id IS NOT NULL
-           )
-           SELECT memory_id,max(similarity)::float AS similarity FROM memory_hits
-           GROUP BY memory_id ORDER BY similarity DESC LIMIT $10""",
-        [
-            _uuid(user_id),
-            embedding.space_id,
-            _vector_param(embedding),
-            kind,
-            _uuid(space_id) if space_id else None,
-            source_domain,
-            after,
-            before,
-            candidate_limit_for(limit),
-            limit,
-        ],
-    )
-    return [
-        {"memoryId": str(row["memory_id"]), "similarity": float(row["similarity"])}
-        for row in rows
-        if row["memory_id"] is not None
-    ]
 
 
 async def find_related_memories(
