@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app import memory_reads
-from app.auth import Principal
+from app.auth import Principal, VerifiedSubject
 from app.embedding import embeddings
 from app.errors import dump_json
 from app.routes import accounts, memories, search, spaces
@@ -139,10 +139,12 @@ def principal() -> Principal:
     return Principal(id=str(USER), subject="synthetic", embeddings_enabled=False)
 
 
-async def test_memory_detail_bytes(principal: Principal, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(memory_reads, "fetchrow", AsyncMock(return_value=DETAIL_ROW))
+async def test_memory_detail_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        memory_reads, "fetchrow", AsyncMock(return_value={**DETAIL_ROW, "deleted": False, "deletion_pending": False})
+    )
 
-    body = (await memories.get_memory(str(MEMORY), principal)).body.decode()
+    body = (await memories.get_memory(str(MEMORY), VerifiedSubject(subject="synthetic"))).body.decode()
 
     assert body == (
         '{"memory":{' + CARD_JSON + ',"processingError":null,"description":"A description","userNote":"A note",'

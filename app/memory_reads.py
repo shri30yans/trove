@@ -18,7 +18,7 @@ import re
 import uuid
 from collections.abc import Mapping
 
-from app.auth import Principal, as_uuid
+from app.auth import Principal, VerifiedSubject, as_uuid
 from app.db import fetch, fetchrow
 from app.domain.retrieval import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT, LIST_MIN_LIMIT, parse_limit
 from app.errors import ApiError, iso_milliseconds
@@ -119,6 +119,116 @@ async def get_memory_detail(
 ) -> MemoryDetail:
     """Read one caller-owned memory, optionally recording an in-app open event."""
     memory = await read_memory(uuid.UUID(principal.id), as_uuid(memory_id), record_opened=record_opened)
+    if memory is None:
+        raise ApiError(404, "memory_not_found", "Memory not found.")
+    return memory
+
+
+# The memory-open path resolves the verified subject to an account inside the same statement that
+# reads the memory: one database round trip instead of one for authentication plus one for the
+# read. The auth preamble below mirrors `_principal_from_request` with `allow_deleted=False`:
+# tombstoned subjects stay 401, deletion-pending subjects stay 403, and the profile upsert only
+# runs when neither flag is set. The outer `auth LEFT JOIN target` always yields exactly one row so
+# the auth outcome is observable even when the memory is missing or belongs to someone else.
+_MEMORY_OPEN_WITH_AUTH_SQL = """WITH status AS (
+     SELECT EXISTS(SELECT 1 FROM deleted_auth_subjects WHERE auth_subject=$1) AS deleted,
+            EXISTS(SELECT 1 FROM account_deletion_requests WHERE auth_subject=$1) AS deletion_pending
+   ), existing AS MATERIALIZED (
+     SELECT id, email, display_name FROM app_users WHERE auth_subject=$1
+   ), profile AS (
+     INSERT INTO app_users (auth_subject, email, display_name)
+     SELECT $1, $2, $3 FROM status s LEFT JOIN existing e ON TRUE
+     WHERE NOT s.deleted AND NOT s.deletion_pending
+       AND (e.id IS NULL
+         OR ($2::text IS NOT NULL AND e.email IS DISTINCT FROM $2::text)
+         OR ($3::text IS NOT NULL AND e.display_name IS DISTINCT FROM $3::text))
+     ON CONFLICT (auth_subject) DO UPDATE SET
+       email = COALESCE(EXCLUDED.email, app_users.email),
+       display_name = COALESCE(EXCLUDED.display_name, app_users.display_name),
+       updated_at = now()
+     RETURNING id, email, display_name
+   ), auth AS (
+     SELECT s.deleted, s.deletion_pending, COALESCE(p.id, e.id) AS user_id
+     FROM status s LEFT JOIN existing e ON TRUE LEFT JOIN profile p ON TRUE
+   ), target AS MATERIALIZED (
+     SELECT m.id, m.kind, m.status, m.processing_error, m.source_app, m.source_url, m.source_domain,
+       m.title, m.description, m.user_note, m.content_text, m.page_text,
+       m.capture_metadata, m.captured_at, m.occurred_at, m.created_at, m.updated_at,
+       COALESCE((SELECT json_agg(json_build_object('id',s.id,'name',s.name,'color',s.color,'icon',s.icon) ORDER BY s.name)
+         FROM memory_spaces ms JOIN spaces s ON s.id=ms.space_id AND s.deleted_at IS NULL
+         WHERE ms.memory_id=m.id AND ms.user_id=m.user_id), '[]'::json) AS spaces,
+       COALESCE((SELECT json_agg(mt.tag ORDER BY mt.tag) FROM memory_tags mt WHERE mt.memory_id=m.id AND mt.user_id=m.user_id), '[]'::json) AS tags
+     FROM memories m JOIN auth a ON TRUE
+     WHERE NOT a.deleted AND NOT a.deletion_pending AND a.user_id IS NOT NULL
+       AND m.id=$4 AND m.user_id=a.user_id AND m.deleted_at IS NULL
+   ), opened AS (
+     UPDATE memories m SET last_opened_at=now()
+     FROM target t JOIN auth a ON TRUE
+     WHERE $5::boolean AND NOT a.deleted AND NOT a.deletion_pending
+       AND m.id=t.id AND m.user_id=a.user_id AND m.deleted_at IS NULL
+     RETURNING m.id, m.user_id
+   ), opened_event AS (
+     INSERT INTO memory_events(user_id,memory_id,event_type)
+     SELECT o.user_id,o.id,'opened' FROM opened o
+     RETURNING memory_id
+   )
+   SELECT (SELECT deleted FROM auth) AS deleted,
+     (SELECT deletion_pending FROM auth) AS deletion_pending,
+     t.*,
+     COALESCE((SELECT json_agg(json_build_object('id',a.id,'filename',a.original_filename,
+       'mimeType',a.mime_type,'byteSize',a.byte_size,'status',a.status,'createdAt',a.created_at,'role',ma.role)
+       ORDER BY ma.position)
+       FROM memory_assets ma JOIN assets a ON a.id=ma.asset_id AND a.user_id=ma.user_id
+       WHERE ma.memory_id=t.id AND ma.user_id=(SELECT user_id FROM auth)), '[]'::json) AS assets
+   FROM auth LEFT JOIN target t ON TRUE"""
+
+
+async def read_memory_for_subject(
+    subject: str,
+    email: str | None,
+    display_name: str | None,
+    memory_id: uuid.UUID,
+    *,
+    record_opened: bool = False,
+) -> MemoryDetail | None:
+    """Read one subject-owned memory, resolving the account in the same round trip.
+
+    Raises 401 for a tombstoned subject and 403 while account deletion is pending, matching the
+    principal path. Returns None when the memory is missing, foreign, or deleted.
+    """
+    row = await fetchrow(
+        _MEMORY_OPEN_WITH_AUTH_SQL,
+        subject,
+        email,
+        display_name,
+        memory_id,
+        record_opened,
+    )
+    if row is None:  # pragma: no cover - the auth anchor always yields exactly one row
+        raise ApiError(500, "internal_error", "The request could not be completed.")
+    if row["deleted"]:
+        raise ApiError(401, "account_deleted", "This account has been deleted.")
+    if row["deletion_pending"]:
+        raise ApiError(403, "account_deletion_pending", "Account deletion is pending. Cancel it to keep using Trove.")
+    if row["id"] is None:
+        return None
+    return MemoryDetail.from_row(row)
+
+
+async def get_memory_detail_for_subject(
+    memory_id: str,
+    subject: VerifiedSubject,
+    *,
+    record_opened: bool = False,
+) -> MemoryDetail:
+    """Read one subject-owned memory for the HTTP open path, recording an in-app open event."""
+    memory = await read_memory_for_subject(
+        subject.subject,
+        subject.email,
+        subject.display_name,
+        as_uuid(memory_id),
+        record_opened=record_opened,
+    )
     if memory is None:
         raise ApiError(404, "memory_not_found", "Memory not found.")
     return memory

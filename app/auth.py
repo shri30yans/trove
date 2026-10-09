@@ -33,6 +33,20 @@ class Principal(BaseModel):
     embeddings_enabled: bool
 
 
+class VerifiedSubject(BaseModel):
+    """A bearer token whose signature, issuer, and subject are verified, without any database work.
+
+    Resolving this to an app account happens inside the route's own query, so a read that needs the
+    caller owns exactly one database round trip instead of one for authentication plus one for the
+    read. Deletion and profile-sync checks stay in that same statement; nothing about them is weaker
+    for sharing the round trip.
+    """
+
+    subject: str
+    email: str | None = None
+    display_name: str | None = None
+
+
 @lru_cache(maxsize=1)
 def _jwks_client() -> jwt.PyJWKClient:
     return jwt.PyJWKClient(get_config().AUTH_JWKS_URL, cache_keys=True, lifespan=300, timeout=5)
@@ -105,7 +119,8 @@ async def _load_principal(subject: str, email: str | None, display_name: str | N
     )
 
 
-async def _principal_from_request(request: Request, *, allow_deleted: bool = False) -> Principal:
+async def _verified_identity(request: Request) -> tuple[str, str | None, str | None]:
+    """Verify the bearer token and return the subject it speaks for, without any database work."""
     header = request.headers.get("authorization")
     if not header or not header.startswith("Bearer "):
         raise _UNAUTHORIZED
@@ -127,6 +142,22 @@ async def _principal_from_request(request: Request, *, allow_deleted: bool = Fal
     subject = payload.get("sub")
     if not isinstance(subject, str) or not subject:
         raise _INVALID_TOKEN
+    return subject, _as_str(payload.get("email")), _as_str(payload.get("name"))
+
+
+async def require_subject(request: Request) -> VerifiedSubject:
+    """Verify the bearer token without touching the database.
+
+    The route resolves the returned subject to an account inside its own query, so authentication
+    and the read share one database round trip. The token checks here are byte-for-byte the same
+    as the principal path: missing, invalid, and OAuth-client tokens fail before any query runs.
+    """
+    subject, email, display_name = await _verified_identity(request)
+    return VerifiedSubject(subject=subject, email=email, display_name=display_name)
+
+
+async def _principal_from_request(request: Request, *, allow_deleted: bool = False) -> Principal:
+    subject, email, display_name = await _verified_identity(request)
     account = await fetchrow(
         """WITH status AS (
              SELECT EXISTS(SELECT 1 FROM deleted_auth_subjects WHERE auth_subject=$1) AS deleted,
@@ -156,8 +187,8 @@ async def _principal_from_request(request: Request, *, allow_deleted: bool = Fal
                             WHERE preferences.user_id=COALESCE(p.id,e.id)),false) AS embeddings_enabled
            FROM status s LEFT JOIN existing e ON TRUE LEFT JOIN profile p ON TRUE""",
         subject,
-        _as_str(payload.get("email")),
-        _as_str(payload.get("name")),
+        email,
+        display_name,
         allow_deleted,
     )
     if account is None:
@@ -167,8 +198,8 @@ async def _principal_from_request(request: Request, *, allow_deleted: bool = Fal
             return Principal(
                 id="",
                 subject=subject,
-                email=_as_str(payload.get("email")),
-                displayName=_as_str(payload.get("name")),
+                email=email,
+                displayName=display_name,
                 embeddings_enabled=bool(account["embeddings_enabled"]),
             )
         raise ApiError(401, "account_deleted", "This account has been deleted.")

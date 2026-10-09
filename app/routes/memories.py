@@ -8,15 +8,17 @@ import uuid
 
 from fastapi import APIRouter, Depends, Request
 
-from app.auth import Principal, as_uuid, require_auth
+from app.auth import Principal, VerifiedSubject, as_uuid, require_auth, require_subject
 from app.db import current_request_id, fetch, fetchrow, transaction
 from app.errors import ApiError, ApiJSONResponse, respond
-from app.memory_reads import get_memory_detail, list_memories_for_user, read_back
+from app.memory_reads import get_memory_detail_for_subject, list_memories_for_user, read_back
 from app.queue import enqueue_memory_processing
 from app.schemas import CreateMemoryRequest, UpdateMemoryRequest, parse_body, source_domain
 from app.times import parse_timestamp
 
-router = APIRouter(dependencies=[Depends(require_auth)])
+# No router-level auth dependency: every endpoint declares its own, so the open path can verify the
+# token without a database round trip and resolve the account inside its read query instead.
+router = APIRouter()
 logger = logging.getLogger("trove.api")
 
 
@@ -150,9 +152,9 @@ async def list_memory_tags(request: Request, principal: Principal = Depends(requ
 
 
 @router.get("/memories/{memory_id}")
-async def get_memory(memory_id: str, principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
+async def get_memory(memory_id: str, subject: VerifiedSubject = Depends(require_subject)) -> ApiJSONResponse:
     started = time.perf_counter()
-    memory = await get_memory_detail(memory_id, principal, record_opened=True)
+    memory = await get_memory_detail_for_subject(memory_id, subject, record_opened=True)
     logger.info(
         "memory_open request_id=%s elapsed_ms=%.1f", current_request_id(), (time.perf_counter() - started) * 1000
     )
