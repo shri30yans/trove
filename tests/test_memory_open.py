@@ -2,7 +2,10 @@ import datetime as dt
 import uuid
 from unittest.mock import AsyncMock
 
+import pytest
+
 from app import memory_reads
+from app.errors import ApiError
 from app.serialize import MemoryAsset, MemoryListPage
 
 USER = uuid.UUID("00000000-0000-4000-8000-000000000001")
@@ -151,14 +154,31 @@ async def test_related_memory_eligibility_checks_ownership_and_ai_in_one_round_t
     from app.auth import Principal
     from app.routes import search
 
-    fetchrow = AsyncMock(return_value={"memory_exists": True, "embeddings_enabled": False})
-    monkeypatch.setattr(search, "fetchrow", fetchrow)
+    fetch = AsyncMock(return_value=[{"memory_exists": True, "embeddings_enabled": False, "id": None}])
+    monkeypatch.setattr(search, "fetch", fetch)
 
     await search.related_memories(str(MEMORY), Principal(id=str(USER), subject="synthetic", embeddings_enabled=False))
 
-    assert fetchrow.await_count == 1
-    query, target, user_id = fetchrow.call_args.args
-    assert target == MEMORY
+    fetch.assert_awaited_once()
+    query, user_id, target = fetch.await_args.args[:3]
     assert user_id == USER
-    assert "FROM memories WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL" in query
-    assert "FROM user_preferences WHERE user_id=$2" in query
+    assert target == MEMORY
+    assert "FROM memories WHERE id=$2 AND user_id=$1 AND deleted_at IS NULL" in query
+    assert "FROM user_preferences WHERE user_id=$1" in query
+    assert "LEFT JOIN filtered_hits" in query
+
+
+async def test_related_memory_keeps_not_found_behavior_in_single_query(monkeypatch):
+    from app.auth import Principal
+    from app.routes import search
+
+    fetch = AsyncMock(return_value=[{"memory_exists": False, "embeddings_enabled": False, "id": None}])
+    monkeypatch.setattr(search, "fetch", fetch)
+
+    with pytest.raises(ApiError) as error:
+        await search.related_memories(
+            str(MEMORY), Principal(id=str(USER), subject="synthetic", embeddings_enabled=False)
+        )
+
+    assert error.value.code == "memory_not_found"
+    fetch.assert_awaited_once()

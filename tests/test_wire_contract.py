@@ -202,9 +202,8 @@ async def test_search_result_bytes(principal: Principal, monkeypatch: pytest.Mon
 
 
 async def test_related_memory_bytes(principal: Principal, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(search, "fetchrow", AsyncMock(return_value={"memory_exists": True, "embeddings_enabled": True}))
     monkeypatch.setattr(embeddings, "models", lambda: MODEL_SET)
-    fetch = AsyncMock(return_value=[RELATED_ROW])
+    fetch = AsyncMock(return_value=[{"memory_exists": True, "embeddings_enabled": True, **RELATED_ROW}])
     monkeypatch.setattr(search, "fetch", fetch)
 
     body = (await search.related_memories(str(MEMORY), principal)).body.decode()

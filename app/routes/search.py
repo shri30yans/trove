@@ -113,11 +113,16 @@ def _search_statement(use_semantic_search: bool) -> str:
     return _SEARCH_SQL_TEMPLATE.replace("__SEMANTIC_SEARCH_CTE__", semantic_cte)
 
 
-_RELATED_SEARCH_SQL = f"""WITH source_vectors AS (
-     SELECT e.embedding FROM embeddings e
+_RELATED_SEARCH_SQL = f"""WITH source_state AS (
+     SELECT EXISTS(SELECT 1 FROM memories WHERE id=$2 AND user_id=$1 AND deleted_at IS NULL) AS memory_exists,
+       COALESCE((SELECT embeddings_enabled FROM user_preferences WHERE user_id=$1),false) AS embeddings_enabled
+   ), source_vectors AS (
+     SELECT e.embedding FROM source_state state JOIN embeddings e
+       ON state.memory_exists AND state.embeddings_enabled
      WHERE e.user_id=$1 AND e.memory_id=$2 AND e.embedding_space=$3
      UNION ALL
-     SELECT e.embedding FROM embeddings e
+     SELECT e.embedding FROM source_state state JOIN embeddings e
+       ON state.memory_exists AND state.embeddings_enabled
      JOIN memory_assets ma ON ma.asset_id=e.asset_id AND ma.user_id=e.user_id
      WHERE e.user_id=$1 AND ma.memory_id=$2 AND e.embedding_space=$3 AND e.modality='image'
    ), vector_hits AS (
@@ -165,10 +170,12 @@ _RELATED_SEARCH_SQL = f"""WITH source_vectors AS (
        )
      ORDER BY candidate.similarity DESC LIMIT $6
    )
-   SELECT m.id,m.kind,m.status,m.source_app,m.source_url,m.source_domain,m.title,m.captured_at,
-     hit.similarity,{PREVIEW_KEY_SUBQUERY}
-   FROM filtered_hits hit JOIN memories m ON m.id=hit.memory_id AND m.user_id=$1 AND m.deleted_at IS NULL
-   ORDER BY hit.similarity DESC"""
+   SELECT state.memory_exists,state.embeddings_enabled,m.id,m.kind,m.status,m.source_app,m.source_url,
+     m.source_domain,m.title,m.captured_at,hit.similarity,{PREVIEW_KEY_SUBQUERY}
+   FROM source_state state
+   LEFT JOIN filtered_hits hit ON state.memory_exists AND state.embeddings_enabled
+   LEFT JOIN memories m ON m.id=hit.memory_id AND m.user_id=$1 AND m.deleted_at IS NULL
+   ORDER BY hit.similarity DESC NULLS LAST"""
 
 
 class SearchMemory(MemoryCard):
@@ -307,54 +314,35 @@ async def related_memories(memory_id: str, principal: Principal = Depends(requir
     started = time.perf_counter()
     user_id = uuid.UUID(principal.id)
     target = as_uuid(memory_id)
-    eligibility_started = time.perf_counter()
-    source = await fetchrow(
-        """SELECT
-             EXISTS(SELECT 1 FROM memories WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL) AS memory_exists,
-             COALESCE((SELECT embeddings_enabled FROM user_preferences WHERE user_id=$2),false) AS embeddings_enabled""",
-        target,
-        user_id,
-    )
-    logger.info(
-        "memory_related request_id=%s stage=eligibility elapsed_ms=%.1f",
-        current_request_id(),
-        (time.perf_counter() - eligibility_started) * 1000,
-    )
-    if source is None or not source["memory_exists"]:
-        raise ApiError(404, "memory_not_found", "Memory not found.")
-    if not source["embeddings_enabled"]:
-        logger.info(
-            "memory_related request_id=%s outcome=disabled elapsed_ms=%.1f",
-            current_request_id(),
-            (time.perf_counter() - started) * 1000,
-        )
-        return respond({"memories": []})
-
     model_set = embeddings.models()
-    if not model_set:
-        logger.info(
-            "memory_related request_id=%s outcome=no_candidates elapsed_ms=%.1f",
-            current_request_id(),
-            (time.perf_counter() - started) * 1000,
-        )
-        return respond({"memories": []})
-
     related_started = time.perf_counter()
     rows = await fetch(
         _RELATED_SEARCH_SQL,
         user_id,
         target,
-        model_set.space_id,
+        model_set.space_id if model_set else None,
         RELATED_CANDIDATE_LIMIT,
         RELATED_MIN_SIMILARITY,
         RELATED_PAGE_SIZE,
     )
-    memories = [RelatedMemory.from_row(row) for row in rows]
+    state = rows[0]
+    if not state["memory_exists"]:
+        raise ApiError(404, "memory_not_found", "Memory not found.")
+    if not state["embeddings_enabled"] or not model_set:
+        outcome = "disabled" if not state["embeddings_enabled"] else "no_candidates"
+        logger.info(
+            "memory_related request_id=%s outcome=%s elapsed_ms=%.1f",
+            current_request_id(),
+            outcome,
+            (time.perf_counter() - started) * 1000,
+        )
+        return respond({"memories": []})
+    memories = [RelatedMemory.from_row(row) for row in rows if row["id"] is not None]
     logger.info(
-        "memory_related request_id=%s stage=vector_and_hydrate elapsed_ms=%.1f results=%s",
+        "memory_related request_id=%s stage=related_query elapsed_ms=%.1f results=%s",
         current_request_id(),
         (time.perf_counter() - related_started) * 1000,
-        len(rows),
+        len(memories),
     )
     logger.info(
         "memory_related request_id=%s outcome=success elapsed_ms=%.1f",
