@@ -160,10 +160,19 @@ async def test_memory_detail_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-async def test_memory_list_page_bytes(principal: Principal, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(memory_reads, "fetch", AsyncMock(return_value=[LIST_ROW, BLANK_ROW]))
+async def test_memory_list_page_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        memory_reads,
+        "fetch",
+        AsyncMock(
+            return_value=[
+                {"deleted": False, "deletion_pending": False, "user_id": USER, **LIST_ROW},
+                {"deleted": False, "deletion_pending": False, "user_id": USER, **BLANK_ROW},
+            ]
+        ),
+    )
 
-    page = await memory_reads.list_memories_for_user(principal, {"limit": "5"})
+    page = await memory_reads.list_memories_for_user(VerifiedSubject(subject="synthetic"), {"limit": "5"})
 
     blank = (
         f'"id":"{SECOND}","kind":"text","status":"queued","sourceApp":null,"sourceUrl":null,'
@@ -179,9 +188,18 @@ async def test_memory_list_page_bytes(principal: Principal, monkeypatch: pytest.
 
 async def test_a_full_page_names_the_row_to_resume_from(principal: Principal, monkeypatch: pytest.MonkeyPatch) -> None:
     """The cursor is the wire timestamp and the identifier, base64url without padding."""
-    monkeypatch.setattr(memory_reads, "fetch", AsyncMock(return_value=[LIST_ROW, BLANK_ROW]))
+    monkeypatch.setattr(
+        memory_reads,
+        "fetch",
+        AsyncMock(
+            return_value=[
+                {"deleted": False, "deletion_pending": False, "user_id": USER, **LIST_ROW},
+                {"deleted": False, "deletion_pending": False, "user_id": USER, **BLANK_ROW},
+            ]
+        ),
+    )
 
-    page = await memory_reads.list_memories_for_user(principal, {"limit": "1"})
+    page = await memory_reads.list_memories_for_user(VerifiedSubject(subject="synthetic"), {"limit": "1"})
 
     assert dump_json(page) == (
         '{"memories":[{' + CARD_JSON + ',"description":"A description","userNote":"A note",'
@@ -191,10 +209,21 @@ async def test_a_full_page_names_the_row_to_resume_from(principal: Principal, mo
     )
 
 
-async def test_search_result_bytes(principal: Principal, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(search, "fetch", AsyncMock(return_value=[SEARCH_ROW]))
+async def test_search_result_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        search,
+        "fetchrow",
+        AsyncMock(
+            return_value={"deleted": False, "deletion_pending": False, "user_id": USER, "embeddings_enabled": False}
+        ),
+    )
+    monkeypatch.setattr(
+        search,
+        "fetch",
+        AsyncMock(return_value=[{"deleted": False, "deletion_pending": False, "user_id": USER, **SEARCH_ROW}]),
+    )
 
-    results = await search.search_memories_for_user(principal, {"q": "page"})
+    results = await search.search_memories_for_user(VerifiedSubject(subject="synthetic"), {"q": "page"})
 
     assert dump_json(results) == (
         '{"query":"page","semanticSearch":false,"memories":[{'
@@ -205,17 +234,29 @@ async def test_search_result_bytes(principal: Principal, monkeypatch: pytest.Mon
     )
 
 
-async def test_related_memory_bytes(principal: Principal, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_related_memory_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(embeddings, "models", lambda: MODEL_SET)
-    fetch = AsyncMock(return_value=[{"memory_exists": True, "embeddings_enabled": True, **RELATED_ROW}])
+    fetch = AsyncMock(
+        return_value=[
+            {
+                "deleted": False,
+                "deletion_pending": False,
+                "user_id": USER,
+                "memory_exists": True,
+                "embeddings_enabled": True,
+                **RELATED_ROW,
+            }
+        ]
+    )
     monkeypatch.setattr(search, "fetch", fetch)
 
-    body = (await search.related_memories(str(MEMORY), principal)).body.decode()
+    body = (await search.related_memories(str(MEMORY), VerifiedSubject(subject="synthetic"))).body.decode()
 
     fetch.assert_awaited_once()
     assert "vector_hits AS" in fetch.await_args.args[0]
     assert "memory_relation_feedback" in fetch.await_args.args[0]
-    assert fetch.await_args.args[1:3] == (USER, MEMORY)
+    assert fetch.await_args.args[1:4] == ("synthetic", None, None)
+    assert fetch.await_args.args[4] == MEMORY
 
     assert body == (
         f'{{"memories":[{{"id":"{SECOND}","kind":"image","status":"ready","sourceApp":"Camera",'
@@ -261,12 +302,19 @@ async def test_a_space_write_reports_no_count(monkeypatch: pytest.MonkeyPatch) -
     )
 
 
-async def test_resurfacing_update_bytes(principal: Principal, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_resurfacing_update_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         accounts,
         "fetchrow",
         AsyncMock(
-            return_value={"resurfacing_enabled": True, "resurfacing_cadence": "weekly", "embeddings_enabled": True}
+            return_value={
+                "deleted": False,
+                "deletion_pending": False,
+                "user_id": USER,
+                "resurfacing_enabled": True,
+                "resurfacing_cadence": "weekly",
+                "embeddings_enabled": True,
+            }
         ),
     )
     monkeypatch.setattr(embeddings, "models", lambda: MODEL_SET)
@@ -277,7 +325,7 @@ async def test_resurfacing_update_bytes(principal: Principal, monkeypatch: pytes
     )
     monkeypatch.setattr(accounts, "fetch", AsyncMock(return_value=[UPDATE_ROW]))
 
-    body = (await accounts.updates(principal)).body.decode()
+    body = (await accounts.updates(VerifiedSubject(subject="synthetic"))).body.decode()
 
     assert body == (
         '{"enabled":true,"cadence":"weekly","updates":[{"memory":{'
@@ -289,12 +337,15 @@ async def test_resurfacing_update_bytes(principal: Principal, monkeypatch: pytes
     )
 
 
-async def test_preferences_bytes(principal: Principal, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_preferences_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         accounts,
         "fetchrow",
         AsyncMock(
             return_value={
+                "deleted": False,
+                "deletion_pending": False,
+                "user_id": USER,
                 "resurfacing_enabled": True,
                 "resurfacing_cadence": "monthly",
                 "embeddings_enabled": True,
@@ -303,7 +354,7 @@ async def test_preferences_bytes(principal: Principal, monkeypatch: pytest.Monke
         ),
     )
 
-    body = (await accounts.get_preferences(principal)).body.decode()
+    body = (await accounts.get_preferences(VerifiedSubject(subject="synthetic"))).body.decode()
 
     assert body == (
         '{"preferences":{"resurfacingEnabled":true,"resurfacingCadence":"monthly","embeddingsEnabled":true,'
@@ -312,11 +363,25 @@ async def test_preferences_bytes(principal: Principal, monkeypatch: pytest.Monke
     )
 
 
-async def test_unsaved_preferences_are_the_defaults(principal: Principal, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_unsaved_preferences_are_the_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     """With no row there is no `updatedAt` to name, so the API reports only the defaults it applied."""
-    monkeypatch.setattr(accounts, "fetchrow", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        accounts,
+        "fetchrow",
+        AsyncMock(
+            return_value={
+                "deleted": False,
+                "deletion_pending": False,
+                "user_id": USER,
+                "resurfacing_enabled": None,
+                "resurfacing_cadence": None,
+                "embeddings_enabled": None,
+                "updated_at": None,
+            }
+        ),
+    )
 
-    body = (await accounts.get_preferences(principal)).body.decode()
+    body = (await accounts.get_preferences(VerifiedSubject(subject="synthetic"))).body.decode()
 
     assert body == (
         '{"preferences":{"resurfacingEnabled":false,"resurfacingCadence":"weekly","embeddingsEnabled":false,'

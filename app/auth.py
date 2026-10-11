@@ -82,44 +82,6 @@ def _as_str(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
-async def _load_principal(subject: str, email: str | None, display_name: str | None) -> Principal:
-    """Resolve an already-verified integration subject, creating its app profile if needed."""
-    row = await fetchrow(
-        """WITH existing AS MATERIALIZED (
-             SELECT id,email,display_name FROM app_users WHERE auth_subject=$1
-           ), profile AS (
-             INSERT INTO app_users(auth_subject,email,display_name)
-             SELECT $1,$2,$3
-             WHERE NOT EXISTS (SELECT 1 FROM existing)
-                OR ($2::text IS NOT NULL AND EXISTS (SELECT 1 FROM existing WHERE email IS DISTINCT FROM $2))
-                OR ($3::text IS NOT NULL AND EXISTS (SELECT 1 FROM existing WHERE display_name IS DISTINCT FROM $3))
-             ON CONFLICT (auth_subject) DO UPDATE SET
-               email=COALESCE(EXCLUDED.email,app_users.email),
-               display_name=COALESCE(EXCLUDED.display_name,app_users.display_name),
-               updated_at=now()
-             RETURNING id,email,display_name
-           )
-           SELECT COALESCE(profile.id,existing.id) AS id,
-                  COALESCE(profile.email,existing.email) AS email,
-                  COALESCE(profile.display_name,existing.display_name) AS display_name,
-                  COALESCE((SELECT preferences.embeddings_enabled FROM user_preferences preferences
-                            WHERE preferences.user_id=COALESCE(profile.id,existing.id)),false) AS embeddings_enabled
-           FROM (SELECT 1) AS anchor LEFT JOIN existing ON TRUE LEFT JOIN profile ON TRUE""",
-        subject,
-        email,
-        display_name,
-    )
-    if row is None or row["id"] is None:
-        raise _INVALID_TOKEN
-    return Principal(
-        id=str(row["id"]),
-        subject=subject,
-        email=row["email"],
-        displayName=row["display_name"],
-        embeddings_enabled=bool(row["embeddings_enabled"]),
-    )
-
-
 async def _verified_identity(request: Request) -> tuple[str, str | None, str | None]:
     """Verify the bearer token and return the subject it speaks for, without any database work."""
     header = request.headers.get("authorization")

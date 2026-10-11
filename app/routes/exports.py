@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import re
 import tempfile
-import uuid
 import zipfile
 from datetime import UTC, datetime
 from typing import Any
@@ -15,11 +14,11 @@ from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
 from app import storage
-from app.auth import Principal, as_uuid, require_auth
+from app.auth import AUTH_SUBJECT_CTE, VerifiedSubject, as_uuid, require_subject, resolve_auth_state
 from app.db import fetch, fetchrow
 from app.errors import ApiError
 
-router = APIRouter(dependencies=[Depends(require_auth)])
+router = APIRouter()
 _PAGE_SIZE = 25
 _MEMORY_EXPORT_QUERY = """SELECT m.id, m.kind, m.source_app, m.source_url, m.title, m.description, m.user_note,
           m.content_text, m.page_text,
@@ -103,26 +102,48 @@ def _remove_file(path: str) -> None:
 
 
 @router.get("/export/markdown")
-async def export_markdown(spaceId: str | None = None, principal: Principal = Depends(require_auth)) -> FileResponse:
-    user_id = uuid.UUID(principal.id)
+async def export_markdown(
+    spaceId: str | None = None, subject: VerifiedSubject = Depends(require_subject)
+) -> FileResponse:
+    auth_args: tuple[object, ...] = (subject.subject, subject.email, subject.display_name)
     selected_space = None
     if spaceId:
         selected_space = await fetchrow(
-            "SELECT id, name FROM spaces WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL",
+            f"""WITH {AUTH_SUBJECT_CTE}, chosen AS (
+                 SELECT id, name FROM spaces
+                 WHERE id=$4 AND user_id=(SELECT user_id FROM auth) AND deleted_at IS NULL
+                   AND NOT (SELECT deleted FROM auth) AND NOT (SELECT deletion_pending FROM auth)
+               )
+               SELECT (SELECT deleted FROM auth) AS deleted,
+                 (SELECT deletion_pending FROM auth) AS deletion_pending,
+                 (SELECT user_id FROM auth) AS user_id,
+                 chosen.id, chosen.name
+               FROM auth LEFT JOIN chosen ON TRUE""",
+            *auth_args,
             as_uuid(spaceId),
-            user_id,
         )
-        if selected_space is None:
+        if selected_space is None:  # pragma: no cover - the auth anchor always yields exactly one row
+            raise ApiError(500, "internal_error", "The request could not be completed.")
+        user_id = resolve_auth_state(selected_space)
+        if selected_space["id"] is None:
             raise ApiError(404, "space_not_found", "Space not found.")
 
     if selected_space:
         indexed_spaces = {str(selected_space["id"]): {"id": selected_space["id"], "name": selected_space["name"]}}
     else:
         all_spaces = await fetch(
-            "SELECT id, name FROM spaces WHERE user_id=$1 AND deleted_at IS NULL ORDER BY name",
-            user_id,
+            f"""WITH {AUTH_SUBJECT_CTE}
+                SELECT a.deleted, a.deletion_pending, a.user_id, listed.id, listed.name
+                FROM auth a
+                LEFT JOIN LATERAL (
+                  SELECT id, name FROM spaces WHERE user_id=a.user_id AND deleted_at IS NULL ORDER BY name
+                ) listed ON NOT a.deleted AND NOT a.deletion_pending AND a.user_id IS NOT NULL""",
+            *auth_args,
         )
-        indexed_spaces = {str(space["id"]): space for space in all_spaces}
+        if not all_spaces:  # pragma: no cover - the auth anchor always yields at least one row
+            raise ApiError(500, "internal_error", "The request could not be completed.")
+        user_id = resolve_auth_state(all_spaces[0])
+        indexed_spaces = {str(space["id"]): space for space in all_spaces if space["id"] is not None}
 
     file_descriptor, archive_path = tempfile.mkstemp(prefix="trove-export-", suffix=".zip")
     os.close(file_descriptor)

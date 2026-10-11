@@ -13,7 +13,15 @@ import uuid
 import asyncpg
 from fastapi import APIRouter, Depends, Request, Response
 
-from app.auth import Principal, as_uuid, require_auth
+from app.auth import (
+    AUTH_SUBJECT_CTE,
+    Principal,
+    VerifiedSubject,
+    as_uuid,
+    require_auth,
+    require_subject,
+    resolve_auth_state,
+)
 from app.db import fetchrow, transaction
 from app.domain.enums import MemoryStatus
 from app.errors import ApiError, ApiJSONResponse, respond
@@ -21,7 +29,7 @@ from app.memory_reads import read_back
 from app.queue import enqueue_memory_processing
 from app.schemas import MoveMemoryRequest, parse_body
 
-router = APIRouter(dependencies=[Depends(require_auth)])
+router = APIRouter()
 
 
 async def _lock_processing_job(
@@ -42,14 +50,25 @@ async def _lock_processing_job(
 
 
 @router.delete("/memories/{memory_id}", status_code=204)
-async def delete_memory(memory_id: str, principal: Principal = Depends(require_auth)) -> Response:
-    user_id = uuid.UUID(principal.id)
+async def delete_memory(memory_id: str, subject: VerifiedSubject = Depends(require_subject)) -> Response:
     deleted = await fetchrow(
-        "UPDATE memories SET deleted_at=now(), updated_at=now() WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL RETURNING id",
+        f"""WITH {AUTH_SUBJECT_CTE}, removed AS (
+             UPDATE memories m SET deleted_at=now(), updated_at=now() FROM auth a
+             WHERE m.id=$4 AND m.user_id=a.user_id AND m.deleted_at IS NULL
+               AND NOT a.deleted AND NOT a.deletion_pending AND a.user_id IS NOT NULL
+             RETURNING m.id
+           )
+           SELECT a.deleted, a.deletion_pending, a.user_id, removed.id
+           FROM auth a LEFT JOIN removed ON TRUE""",
+        subject.subject,
+        subject.email,
+        subject.display_name,
         as_uuid(memory_id),
-        user_id,
     )
-    if deleted is None:
+    if deleted is None:  # pragma: no cover - the auth anchor always yields exactly one row
+        raise ApiError(500, "internal_error", "The request could not be completed.")
+    resolve_auth_state(deleted)
+    if deleted["id"] is None:
         raise ApiError(404, "memory_not_found", "Memory not found.")
     return Response(status_code=204)
 

@@ -8,7 +8,15 @@ import uuid
 
 from fastapi import APIRouter, Depends, Request
 
-from app.auth import Principal, VerifiedSubject, as_uuid, require_auth, require_subject
+from app.auth import (
+    AUTH_SUBJECT_CTE,
+    Principal,
+    VerifiedSubject,
+    as_uuid,
+    require_auth,
+    require_subject,
+    resolve_auth_state,
+)
 from app.db import current_request_id, fetch, fetchrow, transaction
 from app.errors import ApiError, ApiJSONResponse, respond
 from app.memory_reads import get_memory_detail_for_subject, list_memories_for_user, read_back
@@ -131,24 +139,36 @@ async def create_memory(request: Request, principal: Principal = Depends(require
 
 
 @router.get("/memories")
-async def list_memories(request: Request, principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
-    return respond(await list_memories_for_user(principal, request.query_params))
+async def list_memories(request: Request, subject: VerifiedSubject = Depends(require_subject)) -> ApiJSONResponse:
+    return respond(await list_memories_for_user(subject, request.query_params))
 
 
 @router.get("/memory-tags")
-async def list_memory_tags(request: Request, principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
+async def list_memory_tags(request: Request, subject: VerifiedSubject = Depends(require_subject)) -> ApiJSONResponse:
     """List this account's tags for memory-tag autocomplete."""
     query = (request.query_params.get("q") or "").strip().lower()
     if len(query) > 40:
         raise ApiError(400, "invalid_tag", "Tag search must be 40 characters or fewer.")
-    tags = await fetch(
-        """SELECT tag, count(*)::int AS memory_count FROM memory_tags
-           WHERE user_id=$1 AND ($2::text='' OR tag LIKE '%' || $2 || '%')
-           GROUP BY tag ORDER BY memory_count DESC, tag LIMIT 50""",
-        uuid.UUID(principal.id),
+    rows = await fetch(
+        f"""WITH {AUTH_SUBJECT_CTE}
+            SELECT a.deleted, a.deletion_pending, a.user_id, matches.tag, matches.memory_count
+            FROM auth a
+            LEFT JOIN LATERAL (
+              SELECT mt.tag, count(*)::int AS memory_count FROM memory_tags mt
+              WHERE mt.user_id=a.user_id AND ($4::text='' OR mt.tag LIKE '%' || $4 || '%')
+              GROUP BY mt.tag ORDER BY memory_count DESC, mt.tag LIMIT 50
+            ) matches ON NOT a.deleted AND NOT a.deletion_pending AND a.user_id IS NOT NULL""",
+        subject.subject,
+        subject.email,
+        subject.display_name,
         query,
     )
-    return respond({"tags": [{"tag": row["tag"], "memoryCount": row["memory_count"]} for row in tags]})
+    if not rows:  # pragma: no cover - the auth anchor always yields at least one row
+        raise ApiError(500, "internal_error", "The request could not be completed.")
+    resolve_auth_state(rows[0])
+    return respond(
+        {"tags": [{"tag": row["tag"], "memoryCount": row["memory_count"]} for row in rows if row["tag"] is not None]}
+    )
 
 
 @router.get("/memories/{memory_id}")

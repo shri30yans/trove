@@ -11,7 +11,7 @@ from starlette.templating import Jinja2Templates
 
 from app import supabase_auth
 from app.account_deletion import account_deletion_status, cancel_account_deletion, request_account_deletion
-from app.auth import Principal, require_account_deletion_auth, require_auth
+from app.auth import Principal, VerifiedSubject, require_account_deletion_auth, require_subject
 from app.errors import ApiError, ApiJSONResponse
 from app.schemas import (
     ConfirmEmailRequest,
@@ -92,7 +92,9 @@ async def request_password_reset(request: Request) -> ApiJSONResponse:
 
 
 @router.put("/password")
-async def update_own_password(request: Request, _principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
+async def update_own_password(
+    request: Request, _subject: VerifiedSubject = Depends(require_subject)
+) -> ApiJSONResponse:
     payload = await parse_body(PasswordUpdateRequest, request, "invalid_auth_request", "Enter a valid new password.")
     authorization = request.headers.get("authorization", "")
     access_token = authorization.removeprefix("Bearer ").strip()

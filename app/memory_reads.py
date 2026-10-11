@@ -211,8 +211,13 @@ async def get_memory_detail_for_subject(
     return memory
 
 
-async def list_memories_for_user(principal: Principal, query: Mapping[str, str]) -> MemoryListPage:
-    """List one caller's memories from plain query values, shared by HTTP and MCP."""
+async def list_memories_for_user(subject: VerifiedSubject, query: Mapping[str, str]) -> MemoryListPage:
+    """List one caller's memories from plain query values, shared by HTTP and MCP.
+
+    The account resolution shares the list query's round trip through an auth-anchored
+    LATERAL, so paging costs one round trip instead of one for authentication plus one
+    for the page.
+    """
     limit = parse_limit(query.get("limit"), default=LIST_DEFAULT_LIMIT, minimum=LIST_MIN_LIMIT, maximum=LIST_MAX_LIMIT)
     kind = parse_kind_param(query.get("kind"))
     raw_cursor = query.get("cursor")
@@ -221,22 +226,28 @@ async def list_memories_for_user(principal: Principal, query: Mapping[str, str])
         raise ApiError(400, "invalid_cursor", "The page cursor is invalid.")
     after = parse_timestamp(query.get("after")) if query.get("after") else None
     before = parse_timestamp(query.get("before")) if query.get("before") else None
-    user_id = uuid.UUID(principal.id)
     space_id = query.get("spaceId")
     rows = await fetch(
-        f"""SELECT m.id, m.kind, m.status, m.source_app, m.source_url, m.source_domain, m.title,
-            m.description, m.user_note, m.page_text, m.captured_at, m.created_at,
-            {PREVIEW_KEY_SUBQUERY}
-           FROM memories m
-           WHERE m.user_id=$1 AND m.deleted_at IS NULL
-             AND ($2::memory_kind IS NULL OR m.kind=$2::memory_kind)
-             AND ($3::uuid IS NULL OR EXISTS (SELECT 1 FROM memory_spaces ms WHERE ms.memory_id=m.id AND ms.space_id=$3 AND ms.user_id=m.user_id))
-             AND ($4::text IS NULL OR m.source_domain=$4)
-             AND ($5::timestamptz IS NULL OR (m.captured_at,m.id)<($5::timestamptz,$6::uuid))
-             AND ($8::timestamptz IS NULL OR m.captured_at >= $8::timestamptz)
-             AND ($9::timestamptz IS NULL OR m.captured_at < $9::timestamptz)
-           ORDER BY m.captured_at DESC, m.id DESC LIMIT $7""",
-        user_id,
+        f"""WITH {AUTH_SUBJECT_CTE}
+            SELECT a.deleted, a.deletion_pending, a.user_id, page.*
+            FROM auth a
+            LEFT JOIN LATERAL (
+              SELECT m.id, m.kind, m.status, m.source_app, m.source_url, m.source_domain, m.title,
+                m.description, m.user_note, m.page_text, m.captured_at, m.created_at,
+                {PREVIEW_KEY_SUBQUERY}
+              FROM memories m
+              WHERE m.user_id=a.user_id AND m.deleted_at IS NULL
+                AND ($4::memory_kind IS NULL OR m.kind=$4::memory_kind)
+                AND ($5::uuid IS NULL OR EXISTS (SELECT 1 FROM memory_spaces ms WHERE ms.memory_id=m.id AND ms.space_id=$5 AND ms.user_id=m.user_id))
+                AND ($6::text IS NULL OR m.source_domain=$6)
+                AND ($7::timestamptz IS NULL OR (m.captured_at,m.id)<($7::timestamptz,$8::uuid))
+                AND ($10::timestamptz IS NULL OR m.captured_at >= $10::timestamptz)
+                AND ($11::timestamptz IS NULL OR m.captured_at < $11::timestamptz)
+              ORDER BY m.captured_at DESC, m.id DESC LIMIT $9
+            ) page ON NOT a.deleted AND NOT a.deletion_pending AND a.user_id IS NOT NULL""",
+        subject.subject,
+        subject.email,
+        subject.display_name,
         kind,
         as_uuid(space_id) if space_id else None,
         query.get("source"),
@@ -246,8 +257,12 @@ async def list_memories_for_user(principal: Principal, query: Mapping[str, str])
         after,
         before,
     )
-    has_more = len(rows) > limit
-    page = [MemoryListItem.from_row(row) for row in rows[:limit]]
+    if not rows:  # pragma: no cover - the auth anchor always yields at least one row
+        raise ApiError(500, "internal_error", "The request could not be completed.")
+    resolve_auth_state(rows[0])
+    page_rows = [row for row in rows if row["id"] is not None]
+    has_more = len(page_rows) > limit
+    page = [MemoryListItem.from_row(row) for row in page_rows[:limit]]
     last = page[-1] if has_more and page else None
     return MemoryListPage(
         memories=page,

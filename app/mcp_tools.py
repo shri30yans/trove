@@ -13,8 +13,8 @@ from pydantic import Field
 
 from app import supabase_auth
 from app.errors import ApiError, dump_json
-from app.mcp_auth import current_principal, current_subject, oauth_client_id
-from app.memory_reads import get_memory_detail, list_memories_for_user
+from app.mcp_auth import current_subject, oauth_client_id
+from app.memory_reads import get_memory_detail_for_subject, list_memories_for_user
 from app.routes import search, spaces
 from app.schemas import UpdateSpaceRequest
 
@@ -82,8 +82,8 @@ def register_tools(server: FastMCP) -> None:
             values["kind"] = kind
         if cursor:
             values["cursor"] = cursor
-        principal = await current_principal()
-        payload = _serialize_tool_result(await _trove_result(list_memories_for_user(principal, values)))
+        subject = await current_subject()
+        payload = _serialize_tool_result(await _trove_result(list_memories_for_user(subject, values)))
         payload["memories"] = [_note_summary(note) for note in payload["memories"]]
         return payload
 
@@ -97,16 +97,16 @@ def register_tools(server: FastMCP) -> None:
         values = {"q": query, "limit": str(limit)}
         if space_id:
             values["spaceId"] = space_id
-        principal = await current_principal()
-        payload = _serialize_tool_result(await _trove_result(search.search_memories_for_user(principal, values)))
+        subject = await current_subject()
+        payload = _serialize_tool_result(await _trove_result(search.search_memories_for_user(subject, values)))
         payload["memories"] = [_note_summary(note) for note in payload["memories"]]
         return payload
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True))
     async def get_note(note_id: str) -> dict[str, Any]:
         """Fetch one note without recording an in-app open event."""
-        principal = await current_principal()
-        detail = await _trove_result(get_memory_detail(note_id, principal))
+        subject = await current_subject()
+        detail = await _trove_result(get_memory_detail_for_subject(note_id, subject))
         payload = _serialize_tool_result({"memory": detail})
         note = payload["memory"]
         content_limit = 12_000

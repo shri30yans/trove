@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from starlette.requests import Request
 
-from app.auth import Principal
+from app.auth import Principal, VerifiedSubject
 from app.domain.plans import FREE_PLAN, PAID_PLAN, get_storage_plan
 from app.errors import ApiError
 from app.routes import accounts, uploads
@@ -34,10 +34,18 @@ def test_storage_usage_is_reported_without_a_negative_remainder():
 
 
 async def test_plan_endpoint_returns_owned_storage_usage(monkeypatch):
-    lookup = AsyncMock(return_value={"storage_plan": "paid", "storage_used_bytes": 10_000_000})
+    lookup = AsyncMock(
+        return_value={
+            "deleted": False,
+            "deletion_pending": False,
+            "user_id": uuid.UUID(USER_ID),
+            "storage_plan": "paid",
+            "storage_used_bytes": 10_000_000,
+        }
+    )
     monkeypatch.setattr(accounts, "fetchrow", lookup)
-    response = await accounts.get_plan(Principal(id=USER_ID, subject="test", embeddings_enabled=False))
-    assert lookup.call_args.args[1] == uuid.UUID(USER_ID)
+    response = await accounts.get_plan(VerifiedSubject(subject="test"))
+    assert lookup.call_args.args[1:4] == ("test", None, None)
     assert b'"id":"paid"' in response.body
     assert b'"storageUsedBytes":10000000' in response.body
     assert "a.user_id=u.id" in lookup.call_args.args[0]

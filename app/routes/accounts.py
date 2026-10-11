@@ -8,8 +8,8 @@ from typing import Self
 
 from fastapi import APIRouter, Depends, Request
 
-from app.auth import Principal, require_auth
-from app.db import fetch, fetchrow, transaction
+from app.auth import AUTH_SUBJECT_CTE, Principal, VerifiedSubject, require_auth, require_subject, resolve_auth_state
+from app.db import fetch, fetchrow
 from app.domain.enums import MemoryKind, MemoryStatus, ResurfacingCadence
 from app.domain.plans import StoragePlan, get_storage_plan
 from app.domain.retrieval import RESURFACING_PAGE_SIZE
@@ -20,7 +20,7 @@ from app.schemas import UpdatePreferencesRequest, parse_body
 from app.serialize import Row, WireModel, preview_url
 from app.vector_search import find_resurfacing_memories
 
-router = APIRouter(dependencies=[Depends(require_auth)])
+router = APIRouter()
 
 
 class PreferenceSettings(WireModel):
@@ -167,15 +167,29 @@ async def me(principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
 
 
 @router.get("/plan")
-async def get_plan(principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
+async def get_plan(subject: VerifiedSubject = Depends(require_subject)) -> ApiJSONResponse:
     row = await fetchrow(
-        """SELECT u.storage_plan, COALESCE(SUM(a.byte_size), 0)::bigint AS storage_used_bytes
-           FROM app_users u
-           LEFT JOIN assets a ON a.user_id=u.id AND a.status IN ('pending_upload','uploaded','attached')
-           WHERE u.id=$1 GROUP BY u.storage_plan""",
-        uuid.UUID(principal.id),
+        f"""WITH {AUTH_SUBJECT_CTE}, usage AS (
+             SELECT u.storage_plan, COALESCE(SUM(a.byte_size), 0)::bigint AS storage_used_bytes
+             FROM app_users u
+             LEFT JOIN assets a ON a.user_id=u.id AND a.status IN ('pending_upload','uploaded','attached')
+             WHERE u.id=(SELECT user_id FROM auth)
+               AND NOT (SELECT deleted FROM auth) AND NOT (SELECT deletion_pending FROM auth)
+             GROUP BY u.storage_plan
+           )
+           SELECT (SELECT deleted FROM auth) AS deleted,
+             (SELECT deletion_pending FROM auth) AS deletion_pending,
+             (SELECT user_id FROM auth) AS user_id,
+             usage.storage_plan, usage.storage_used_bytes
+           FROM auth LEFT JOIN usage ON TRUE""",
+        subject.subject,
+        subject.email,
+        subject.display_name,
     )
-    if row is None:
+    if row is None:  # pragma: no cover - the auth anchor always yields exactly one row
+        raise ApiError(500, "internal_error", "The request could not be completed.")
+    resolve_auth_state(row)
+    if row["storage_plan"] is None:
         raise ApiError(500, "account_not_found", "The account plan could not be loaded.")
     try:
         plan = Plan.from_usage(get_storage_plan(row["storage_plan"]), int(row["storage_used_bytes"]))
@@ -185,13 +199,25 @@ async def get_plan(principal: Principal = Depends(require_auth)) -> ApiJSONRespo
 
 
 @router.get("/processing")
-async def processing_summary(principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
+async def processing_summary(subject: VerifiedSubject = Depends(require_subject)) -> ApiJSONResponse:
     rows = await fetch(
-        """SELECT status, count(*)::int AS memory_count
-           FROM memories WHERE user_id=$1 AND deleted_at IS NULL GROUP BY status""",
-        uuid.UUID(principal.id),
+        f"""WITH {AUTH_SUBJECT_CTE}
+            SELECT a.deleted, a.deletion_pending, a.user_id, counts.status, counts.memory_count
+            FROM auth a
+            LEFT JOIN LATERAL (
+              SELECT status, count(*)::int AS memory_count
+              FROM memories WHERE user_id=a.user_id AND deleted_at IS NULL GROUP BY status
+            ) counts ON NOT a.deleted AND NOT a.deletion_pending AND a.user_id IS NOT NULL""",
+        subject.subject,
+        subject.email,
+        subject.display_name,
     )
-    counts: dict[MemoryStatus, int] = {row["status"]: int(row["memory_count"]) for row in rows}
+    if not rows:  # pragma: no cover - the auth anchor always yields at least one row
+        raise ApiError(500, "internal_error", "The request could not be completed.")
+    resolve_auth_state(rows[0])
+    counts: dict[MemoryStatus, int] = {
+        row["status"]: int(row["memory_count"]) for row in rows if row["status"] is not None
+    }
     return respond(
         {
             "processing": ProcessingSummary(
@@ -206,68 +232,119 @@ async def processing_summary(principal: Principal = Depends(require_auth)) -> Ap
 
 
 @router.get("/preferences")
-async def get_preferences(principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
+async def get_preferences(subject: VerifiedSubject = Depends(require_subject)) -> ApiJSONResponse:
     row = await fetchrow(
-        """SELECT resurfacing_enabled,resurfacing_cadence,embeddings_enabled,updated_at
-           FROM user_preferences WHERE user_id=$1""",
-        uuid.UUID(principal.id),
+        f"""WITH {AUTH_SUBJECT_CTE}
+            SELECT a.deleted, a.deletion_pending, a.user_id,
+              prefs.resurfacing_enabled, prefs.resurfacing_cadence,
+              prefs.embeddings_enabled, prefs.updated_at
+            FROM auth a
+            LEFT JOIN user_preferences prefs
+              ON prefs.user_id=a.user_id AND NOT a.deleted AND NOT a.deletion_pending""",
+        subject.subject,
+        subject.email,
+        subject.display_name,
     )
-    preferences = SavedPreferenceSettings.from_row(row) if row else PreferenceSettings.defaults()
+    if row is None:  # pragma: no cover - the auth anchor always yields exactly one row
+        raise ApiError(500, "internal_error", "The request could not be completed.")
+    resolve_auth_state(row)
+    preferences = (
+        SavedPreferenceSettings.from_row(row) if row["updated_at"] is not None else PreferenceSettings.defaults()
+    )
     return respond({"preferences": preferences})
 
 
 @router.patch("/preferences")
-async def patch_preferences(request: Request, principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
+async def patch_preferences(request: Request, subject: VerifiedSubject = Depends(require_subject)) -> ApiJSONResponse:
     """Persist the choice only; the worker's embedding reconcile converges the library on it."""
     payload = await parse_body(UpdatePreferencesRequest, request, "invalid_preferences", "Invalid preferences.")
-    user_id = uuid.UUID(principal.id)
 
-    async with transaction() as connection:
-        row = await connection.fetchrow(
-            """INSERT INTO user_preferences(user_id,resurfacing_enabled,resurfacing_cadence,embeddings_enabled)
-               VALUES($1,CASE WHEN COALESCE($4,false) THEN COALESCE($2,false) ELSE false END,COALESCE($3,'weekly'),COALESCE($4,false))
-               ON CONFLICT(user_id) DO UPDATE SET
-                 resurfacing_enabled=CASE WHEN COALESCE($4,user_preferences.embeddings_enabled) THEN COALESCE($2,user_preferences.resurfacing_enabled) ELSE false END,
-                 resurfacing_cadence=COALESCE($3,user_preferences.resurfacing_cadence),
-                 embeddings_enabled=COALESCE($4,user_preferences.embeddings_enabled),updated_at=now()
-               RETURNING resurfacing_enabled,resurfacing_cadence,embeddings_enabled,updated_at""",
-            user_id,
-            payload.resurfacingEnabled,
-            payload.resurfacingCadence.value if payload.resurfacingCadence else None,
-            payload.embeddingsEnabled,
-        )
+    row = await fetchrow(
+        f"""WITH {AUTH_SUBJECT_CTE}, saved AS (
+             INSERT INTO user_preferences(user_id,resurfacing_enabled,resurfacing_cadence,embeddings_enabled)
+             SELECT (SELECT user_id FROM auth),
+               CASE WHEN COALESCE($4,false) THEN COALESCE($5,false) ELSE false END,
+               COALESCE($6,'weekly'),COALESCE($4,false)
+             WHERE NOT (SELECT deleted FROM auth) AND NOT (SELECT deletion_pending FROM auth)
+               AND (SELECT user_id FROM auth) IS NOT NULL
+             ON CONFLICT(user_id) DO UPDATE SET
+               resurfacing_enabled=CASE WHEN COALESCE($4,user_preferences.embeddings_enabled) THEN COALESCE($5,user_preferences.resurfacing_enabled) ELSE false END,
+               resurfacing_cadence=COALESCE($6,user_preferences.resurfacing_cadence),
+               embeddings_enabled=COALESCE($4,user_preferences.embeddings_enabled),updated_at=now()
+             RETURNING resurfacing_enabled,resurfacing_cadence,embeddings_enabled,updated_at
+           )
+           SELECT (SELECT deleted FROM auth) AS deleted,
+             (SELECT deletion_pending FROM auth) AS deletion_pending,
+             (SELECT user_id FROM auth) AS user_id,
+             saved.resurfacing_enabled, saved.resurfacing_cadence,
+             saved.embeddings_enabled, saved.updated_at
+           FROM auth LEFT JOIN saved ON TRUE""",
+        subject.subject,
+        subject.email,
+        subject.display_name,
+        payload.embeddingsEnabled,
+        payload.resurfacingEnabled,
+        payload.resurfacingCadence.value if payload.resurfacingCadence else None,
+    )
 
-    if row is None:
+    if row is None:  # pragma: no cover - the auth anchor always yields exactly one row
+        raise ApiError(500, "internal_error", "The request could not be completed.")
+    resolve_auth_state(row)
+    if row["updated_at"] is None:  # pragma: no cover - the gates above write whenever auth passes
         raise ApiError(500, "internal_error", "The request could not be completed.")
     return respond({"preferences": SavedPreferenceSettings.from_row(row)})
 
 
 @router.get("/explore")
-async def explore(principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
-    user_id = uuid.UUID(principal.id)
+async def explore(subject: VerifiedSubject = Depends(require_subject)) -> ApiJSONResponse:
     months = await fetch(
-        """SELECT date_trunc('month',captured_at)::date AS month, count(*)::int AS memory_count
-           FROM memories WHERE user_id=$1 AND deleted_at IS NULL AND captured_at >= now()-interval '12 months'
-           GROUP BY 1 ORDER BY 1 DESC LIMIT 12""",
-        user_id,
+        f"""WITH {AUTH_SUBJECT_CTE}
+            SELECT a.deleted, a.deletion_pending, a.user_id, buckets.month, buckets.memory_count
+            FROM auth a
+            LEFT JOIN LATERAL (
+              SELECT date_trunc('month',captured_at)::date AS month, count(*)::int AS memory_count
+              FROM memories WHERE user_id=a.user_id AND deleted_at IS NULL AND captured_at >= now()-interval '12 months'
+              GROUP BY 1 ORDER BY 1 DESC LIMIT 12
+            ) buckets ON NOT a.deleted AND NOT a.deletion_pending AND a.user_id IS NOT NULL""",
+        subject.subject,
+        subject.email,
+        subject.display_name,
     )
+    if not months:  # pragma: no cover - the auth anchor always yields at least one row
+        raise ApiError(500, "internal_error", "The request could not be completed.")
+    resolve_auth_state(months[0])
     return respond(
         {
-            "months": [ExploreMonth(month=row["month"], memoryCount=row["memory_count"]) for row in months],
+            "months": [
+                ExploreMonth(month=row["month"], memoryCount=row["memory_count"])
+                for row in months
+                if row["month"] is not None
+            ],
         }
     )
 
 
 @router.get("/updates")
-async def updates(principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
-    user_id = uuid.UUID(principal.id)
+async def updates(subject: VerifiedSubject = Depends(require_subject)) -> ApiJSONResponse:
     settings = await fetchrow(
-        "SELECT resurfacing_enabled,resurfacing_cadence,embeddings_enabled FROM user_preferences WHERE user_id=$1",
-        user_id,
+        f"""WITH {AUTH_SUBJECT_CTE}
+            SELECT (SELECT deleted FROM auth) AS deleted,
+              (SELECT deletion_pending FROM auth) AS deletion_pending,
+              (SELECT user_id FROM auth) AS user_id,
+              prefs.resurfacing_enabled, prefs.resurfacing_cadence, prefs.embeddings_enabled
+            FROM auth LEFT JOIN user_preferences prefs ON prefs.user_id=auth.user_id""",
+        subject.subject,
+        subject.email,
+        subject.display_name,
     )
-    cadence = settings["resurfacing_cadence"] if settings else ResurfacingCadence.WEEKLY
+    if settings is None:  # pragma: no cover - the auth anchor always yields exactly one row
+        raise ApiError(500, "internal_error", "The request could not be completed.")
+    user_id = resolve_auth_state(settings)
+    cadence = (
+        settings["resurfacing_cadence"] if settings["resurfacing_enabled"] is not None else ResurfacingCadence.WEEKLY
+    )
     if (
-        settings is None
+        settings["resurfacing_enabled"] is None
         or not settings["resurfacing_enabled"]
         or not settings["embeddings_enabled"]
         or cadence == ResurfacingCadence.OFF
@@ -277,7 +354,7 @@ async def updates(principal: Principal = Depends(require_auth)) -> ApiJSONRespon
     model_set = embeddings.models()
     if model_set is None:
         return respond(ResurfacingPage(enabled=True, cadence=cadence, updates=[]))
-    related = await find_resurfacing_memories(principal.id, model_set.space_id)
+    related = await find_resurfacing_memories(str(user_id), model_set.space_id)
     if not related:
         return respond(ResurfacingPage(enabled=True, cadence=cadence, updates=[]))
 

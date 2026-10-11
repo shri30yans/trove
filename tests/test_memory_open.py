@@ -133,21 +133,21 @@ async def test_mcp_memory_detail_reads_without_recording_an_open(monkeypatch):
 
 
 async def test_memory_list_service_accepts_plain_query_values(monkeypatch):
-    from app.auth import Principal
+    from app.auth import VerifiedSubject
 
-    fetch = AsyncMock(return_value=[])
+    fetch = AsyncMock(return_value=[{"deleted": False, "deletion_pending": False, "user_id": USER, "id": None}])
     monkeypatch.setattr(memory_reads, "fetch", fetch)
 
     result = await memory_reads.list_memories_for_user(
-        Principal(id=str(USER), subject="synthetic", embeddings_enabled=False),
+        VerifiedSubject(subject="synthetic"),
         {"limit": "4", "spaceId": str(MEMORY), "kind": "text"},
     )
 
     assert result == MemoryListPage(memories=[], nextCursor=None)
-    assert fetch.await_args.args[1] == USER
-    assert fetch.await_args.args[2] == "text"
-    assert fetch.await_args.args[3] == MEMORY
-    assert fetch.await_args.args[7] == 5
+    assert fetch.await_args.args[1:4] == ("synthetic", None, None)
+    assert fetch.await_args.args[4] == "text"
+    assert fetch.await_args.args[5] == MEMORY
+    assert fetch.await_args.args[9] == 5
 
 
 async def test_memory_open_for_subject_resolves_account_and_reads_in_one_round_trip(monkeypatch):
@@ -254,34 +254,54 @@ async def test_require_subject_verifies_token_without_touching_the_database(monk
 
 
 async def test_related_memory_eligibility_checks_ownership_and_ai_in_one_round_trip(monkeypatch):
-    from app.auth import Principal
+    from app.auth import VerifiedSubject
     from app.routes import search
 
-    fetch = AsyncMock(return_value=[{"memory_exists": True, "embeddings_enabled": False, "id": None}])
+    fetch = AsyncMock(
+        return_value=[
+            {
+                "deleted": False,
+                "deletion_pending": False,
+                "user_id": USER,
+                "memory_exists": True,
+                "embeddings_enabled": False,
+                "id": None,
+            }
+        ]
+    )
     monkeypatch.setattr(search, "fetch", fetch)
 
-    await search.related_memories(str(MEMORY), Principal(id=str(USER), subject="synthetic", embeddings_enabled=False))
+    await search.related_memories(str(MEMORY), VerifiedSubject(subject="synthetic"))
 
     fetch.assert_awaited_once()
-    query, user_id, target = fetch.await_args.args[:3]
-    assert user_id == USER
-    assert target == MEMORY
-    assert "FROM memories WHERE id=$2 AND user_id=$1 AND deleted_at IS NULL" in query
-    assert "FROM user_preferences WHERE user_id=$1" in query
+    query = fetch.await_args.args[0]
+    assert fetch.await_args.args[1:4] == ("synthetic", None, None)
+    assert fetch.await_args.args[4] == MEMORY
+    assert "FROM memories WHERE id=$4 AND user_id=(SELECT user_id FROM auth)" in query
+    assert "FROM user_preferences WHERE user_id=(SELECT user_id FROM auth)" in query
     assert "LEFT JOIN filtered_hits" in query
 
 
 async def test_related_memory_keeps_not_found_behavior_in_single_query(monkeypatch):
-    from app.auth import Principal
+    from app.auth import VerifiedSubject
     from app.routes import search
 
-    fetch = AsyncMock(return_value=[{"memory_exists": False, "embeddings_enabled": False, "id": None}])
+    fetch = AsyncMock(
+        return_value=[
+            {
+                "deleted": False,
+                "deletion_pending": False,
+                "user_id": USER,
+                "memory_exists": False,
+                "embeddings_enabled": False,
+                "id": None,
+            }
+        ]
+    )
     monkeypatch.setattr(search, "fetch", fetch)
 
     with pytest.raises(ApiError) as error:
-        await search.related_memories(
-            str(MEMORY), Principal(id=str(USER), subject="synthetic", embeddings_enabled=False)
-        )
+        await search.related_memories(str(MEMORY), VerifiedSubject(subject="synthetic"))
 
     assert error.value.code == "memory_not_found"
     fetch.assert_awaited_once()

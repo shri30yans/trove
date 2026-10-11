@@ -13,12 +13,12 @@ from starlette.background import BackgroundTask
 from starlette.responses import StreamingResponse
 
 from app import storage
-from app.auth import Principal, require_auth
+from app.auth import AUTH_SUBJECT_CTE, VerifiedSubject, require_subject, resolve_auth_state
 from app.db import fetchrow
 from app.errors import ApiError
 from app.media import parse_byte_range
 
-router = APIRouter(dependencies=[Depends(require_auth)])
+router = APIRouter()
 
 
 class StoredMedia(BaseModel):
@@ -80,35 +80,55 @@ async def _deliver(request: Request, asset: StoredMedia) -> Response:
 
 @router.get("/assets/{asset_id}/content")
 async def asset_content(
-    asset_id: uuid.UUID, request: Request, principal: Principal = Depends(require_auth)
+    asset_id: uuid.UUID, request: Request, subject: VerifiedSubject = Depends(require_subject)
 ) -> Response:
     asset = await fetchrow(
-        """SELECT a.object_key, a.mime_type FROM assets a
-           WHERE a.id=$1 AND a.user_id=$2 AND a.status IN ('uploaded', 'attached')
-           AND EXISTS (SELECT 1 FROM memory_assets ma JOIN memories m ON m.id=ma.memory_id
-                       WHERE ma.asset_id=a.id AND ma.user_id=a.user_id
-                       AND m.user_id=a.user_id AND m.deleted_at IS NULL)""",
+        f"""WITH {AUTH_SUBJECT_CTE}
+            SELECT a.deleted, a.deletion_pending, a.user_id, found.object_key, found.mime_type
+            FROM auth a
+            LEFT JOIN LATERAL (
+              SELECT a2.object_key, a2.mime_type FROM assets a2
+              WHERE a2.id=$4 AND a2.user_id=a.user_id AND a2.status IN ('uploaded', 'attached')
+              AND EXISTS (SELECT 1 FROM memory_assets ma JOIN memories m ON m.id=ma.memory_id
+                          WHERE ma.asset_id=a2.id AND ma.user_id=a2.user_id
+                          AND m.user_id=a2.user_id AND m.deleted_at IS NULL)
+            ) found ON NOT a.deleted AND NOT a.deletion_pending AND a.user_id IS NOT NULL""",
+        subject.subject,
+        subject.email,
+        subject.display_name,
         asset_id,
-        uuid.UUID(principal.id),
     )
-    if asset is None:
+    if asset is None:  # pragma: no cover - the auth anchor always yields exactly one row
+        raise ApiError(500, "internal_error", "The request could not be completed.")
+    resolve_auth_state(asset)
+    if asset["object_key"] is None:
         raise ApiError(404, "media_not_found", "This file is no longer available.")
     return await _deliver(request, StoredMedia.model_validate(asset))
 
 
 @router.get("/memories/{memory_id}/preview")
 async def memory_preview(
-    memory_id: uuid.UUID, request: Request, principal: Principal = Depends(require_auth)
+    memory_id: uuid.UUID, request: Request, subject: VerifiedSubject = Depends(require_subject)
 ) -> Response:
     asset = await fetchrow(
-        """SELECT a.object_key, a.mime_type FROM memories m
-           JOIN memory_assets ma ON ma.memory_id=m.id AND ma.user_id=m.user_id
-           JOIN assets a ON a.id=ma.asset_id AND a.user_id=m.user_id
-           WHERE m.id=$1 AND m.user_id=$2 AND m.deleted_at IS NULL
-             AND a.status IN ('uploaded', 'attached') ORDER BY ma.position LIMIT 1""",
+        f"""WITH {AUTH_SUBJECT_CTE}
+            SELECT a.deleted, a.deletion_pending, a.user_id, found.object_key, found.mime_type
+            FROM auth a
+            LEFT JOIN LATERAL (
+              SELECT a2.object_key, a2.mime_type FROM memories m
+              JOIN memory_assets ma ON ma.memory_id=m.id AND ma.user_id=m.user_id
+              JOIN assets a2 ON a2.id=ma.asset_id AND a2.user_id=m.user_id
+              WHERE m.id=$4 AND m.user_id=a.user_id AND m.deleted_at IS NULL
+                AND a2.status IN ('uploaded', 'attached') ORDER BY ma.position LIMIT 1
+            ) found ON NOT a.deleted AND NOT a.deletion_pending AND a.user_id IS NOT NULL""",
+        subject.subject,
+        subject.email,
+        subject.display_name,
         memory_id,
-        uuid.UUID(principal.id),
     )
-    if asset is None:
+    if asset is None:  # pragma: no cover - the auth anchor always yields exactly one row
+        raise ApiError(500, "internal_error", "The request could not be completed.")
+    resolve_auth_state(asset)
+    if asset["object_key"] is None:
         raise ApiError(404, "media_not_found", "This preview is no longer available.")
     return await _deliver(request, StoredMedia.model_validate(asset))

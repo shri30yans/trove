@@ -6,13 +6,15 @@ import pytest
 from botocore.response import StreamingBody
 from starlette.requests import Request
 
-from app.auth import Principal
+from app.auth import VerifiedSubject
 from app.errors import ApiError
 from app.media import parse_byte_range
 from app.routes import media
 
 USER = uuid.UUID("00000000-0000-4000-8000-000000000002")
 ASSET = uuid.UUID("00000000-0000-4000-8000-000000000001")
+SUBJECT = VerifiedSubject(subject="synthetic")
+ANCHOR = {"deleted": False, "deletion_pending": False, "user_id": USER}
 
 
 @pytest.mark.parametrize(
@@ -36,7 +38,7 @@ def request(value=None):
 
 @pytest.fixture
 def delivery(monkeypatch):
-    lookup = AsyncMock(return_value={"object_key": "private/synthetic", "mime_type": "audio/mpeg"})
+    lookup = AsyncMock(return_value={**ANCHOR, "object_key": "private/synthetic", "mime_type": "audio/mpeg"})
     head = AsyncMock(return_value=5)
     body = StreamingBody(io.BytesIO(b"hello"), 5)
     opened = AsyncMock(return_value=(body, 5))
@@ -48,24 +50,21 @@ def delivery(monkeypatch):
 
 async def test_media_streams_and_closes_private_object(delivery):
     lookup, _, _, body = delivery
-    response = await media.asset_content(
-        ASSET, request(), Principal(id=str(USER), subject="synthetic", embeddings_enabled=False)
-    )
+    response = await media.asset_content(ASSET, request(), SUBJECT)
     assert response.status_code == 200
     assert response.headers["content-length"] == "5"
     assert b"".join([chunk async for chunk in response.body_iterator]) == b"hello"
     assert body._raw_stream.closed
-    assert lookup.call_args.args[1:] == (ASSET, USER)
+    assert lookup.call_args.args[1:4] == ("synthetic", None, None)
+    assert lookup.call_args.args[4] == ASSET
     assert "m.deleted_at IS NULL" in lookup.call_args.args[0]
 
 
 async def test_unowned_asset_never_opens_storage(delivery):
     lookup, head, opened, _ = delivery
-    lookup.return_value = None
+    lookup.return_value = {**ANCHOR, "object_key": None, "mime_type": None}
     with pytest.raises(ApiError) as error:
-        await media.asset_content(
-            ASSET, request(), Principal(id=str(USER), subject="synthetic", embeddings_enabled=False)
-        )
+        await media.asset_content(ASSET, request(), SUBJECT)
     assert error.value.status_code == 404
     head.assert_not_awaited()
     opened.assert_not_awaited()
@@ -74,9 +73,7 @@ async def test_unowned_asset_never_opens_storage(delivery):
 async def test_media_range_returns_exact_requested_bytes(delivery):
     _, _, opened, _ = delivery
     opened.return_value = (StreamingBody(io.BytesIO(b"ell"), 3), 3)
-    response = await media.asset_content(
-        ASSET, request("bytes=1-3"), Principal(id=str(USER), subject="synthetic", embeddings_enabled=False)
-    )
+    response = await media.asset_content(ASSET, request("bytes=1-3"), SUBJECT)
     assert response.status_code == 206
     assert response.headers["content-range"] == "bytes 1-3/5"
     assert b"".join([chunk async for chunk in response.body_iterator]) == b"ell"
@@ -84,9 +81,7 @@ async def test_media_range_returns_exact_requested_bytes(delivery):
 
 
 async def test_unsatisfiable_range_does_not_open_storage(delivery):
-    response = await media.asset_content(
-        ASSET, request("bytes=9-"), Principal(id=str(USER), subject="synthetic", embeddings_enabled=False)
-    )
+    response = await media.asset_content(ASSET, request("bytes=9-"), SUBJECT)
     assert response.status_code == 416
     assert response.headers["content-range"] == "bytes */5"
     delivery[2].assert_not_awaited()
@@ -95,17 +90,13 @@ async def test_unsatisfiable_range_does_not_open_storage(delivery):
 async def test_bad_storage_length_closes_before_returning_failure(delivery):
     delivery[2].return_value = (delivery[3], 4)
     with pytest.raises(ApiError) as error:
-        await media.asset_content(
-            ASSET, request(), Principal(id=str(USER), subject="synthetic", embeddings_enabled=False)
-        )
+        await media.asset_content(ASSET, request(), SUBJECT)
     assert error.value.status_code == 502
     assert delivery[3]._raw_stream.closed
 
 
 async def test_disconnected_reader_closes_provider_stream(delivery):
-    response = await media.asset_content(
-        ASSET, request(), Principal(id=str(USER), subject="synthetic", embeddings_enabled=False)
-    )
+    response = await media.asset_content(ASSET, request(), SUBJECT)
     assert await anext(response.body_iterator) == b"hello"
     await response.body_iterator.aclose()
     assert delivery[3]._raw_stream.closed

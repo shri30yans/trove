@@ -9,7 +9,7 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 
 from app import supabase_auth
-from app.auth import Principal, VerifiedSubject, _load_principal, verify_bearer_token
+from app.auth import VerifiedSubject, verify_bearer_token
 from app.config import get_config
 from app.db import fetchrow
 from app.errors import ApiError
@@ -74,14 +74,6 @@ async def current_subject() -> VerifiedSubject:
     if token is None or not token.subject:
         raise ValueError("A valid Trove account link is required.")
     return VerifiedSubject(subject=token.subject)
-
-
-async def current_principal() -> Principal:
-    """Resolve the verified MCP token's account to Trove's internal principal."""
-    token = get_access_token()
-    if token is None or not token.subject:
-        raise ValueError("A valid Trove account link is required.")
-    return await _load_principal(token.subject, None, None)
 
 
 def oauth_client_id(token: AccessToken) -> str:
