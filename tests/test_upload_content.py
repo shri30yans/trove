@@ -1,17 +1,20 @@
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 from starlette.requests import Request
 
 from app import upload_transfer
-from app.auth import Principal
+from app.auth import VerifiedSubject
 from app.errors import ApiError
 from app.routes import uploads
 
 ASSET_ID = "00000000-0000-4000-8000-000000000001"
 USER_ID = "00000000-0000-4000-8000-000000000002"
+SUBJECT = VerifiedSubject(subject="test")
+ANCHOR = {"deleted": False, "deletion_pending": False, "user_id": UUID(USER_ID)}
 
 
 def request_with_body(body: bytes) -> Request:
@@ -24,6 +27,7 @@ def request_with_body(body: bytes) -> Request:
 @pytest.fixture
 def upload(monkeypatch):
     row = {
+        **ANCHOR,
         "object_key": "owner/file",
         "byte_size": 5,
         "mime_type": "text/plain",
@@ -48,9 +52,7 @@ def upload(monkeypatch):
 
 
 async def send(body):
-    return await uploads.upload_content(
-        ASSET_ID, request_with_body(body), Principal(id=USER_ID, subject="test", embeddings_enabled=False)
-    )
+    return await uploads.upload_content(ASSET_ID, request_with_body(body), SUBJECT)
 
 
 async def test_upload_streams_exact_content_and_scopes_lookup_to_owner(upload):
@@ -58,8 +60,9 @@ async def test_upload_streams_exact_content_and_scopes_lookup_to_owner(upload):
     response = await send(b"hello")
     assert response.status_code == 200
     assert stored == [(b"hello", "owner/file", "text/plain")]
-    assert str(lookup.call_args.args[2]) == USER_ID
-    assert "user_id=$2" in lookup.call_args.args[0]
+    assert lookup.call_args.args[1:4] == ("test", None, None)
+    assert lookup.call_args.args[4] == UUID(ASSET_ID)
+    assert "a2.user_id=a.user_id" in lookup.call_args.args[0]
 
 
 @pytest.mark.parametrize(("body", "status"), [(b"toolong", 413), (b"hi", 422)])
@@ -89,7 +92,7 @@ async def test_upload_cannot_overwrite_completed_asset(upload):
 
 
 async def test_unknown_or_other_account_asset_is_not_found(upload):
-    upload[1].return_value = None
+    upload[1].return_value = {**ANCHOR, "object_key": None}
     with pytest.raises(ApiError) as error:
         await send(b"hello")
     assert error.value.status_code == 404
@@ -125,7 +128,7 @@ async def test_completion_returns_verified_size_on_first_call_and_retry(upload, 
     update = AsyncMock()
     monkeypatch.setattr(uploads.storage, "head_object_size", head)
     monkeypatch.setattr(uploads, "execute", update)
-    response = await uploads.complete_upload(ASSET_ID, Principal(id=USER_ID, subject="test", embeddings_enabled=False))
+    response = await uploads.complete_upload(ASSET_ID, SUBJECT)
     assert json.loads(response.body)["byteSize"] == 5
     assert head.await_count == (1 if status == "pending_upload" else 0)
     assert update.await_count == (1 if status == "pending_upload" else 0)
@@ -137,7 +140,7 @@ async def test_completion_rejects_invalid_persisted_size(upload, monkeypatch, si
     head = AsyncMock()
     monkeypatch.setattr(uploads.storage, "head_object_size", head)
     with pytest.raises(ApiError) as error:
-        await uploads.complete_upload(ASSET_ID, Principal(id=USER_ID, subject="test", embeddings_enabled=False))
+        await uploads.complete_upload(ASSET_ID, SUBJECT)
     assert error.value.code == "invalid_upload_record"
     head.assert_not_awaited()
 
@@ -147,7 +150,7 @@ async def test_completion_mismatch_never_confirms_upload(upload, monkeypatch):
     monkeypatch.setattr(uploads, "execute", update)
     monkeypatch.setattr(uploads.storage, "head_object_size", AsyncMock(return_value=4))
     with pytest.raises(ApiError) as error:
-        await uploads.complete_upload(ASSET_ID, Principal(id=USER_ID, subject="test", embeddings_enabled=False))
+        await uploads.complete_upload(ASSET_ID, SUBJECT)
     assert error.value.code == "upload_size_mismatch"
     update.assert_not_awaited()
 
@@ -156,11 +159,7 @@ async def test_completion_mismatch_never_confirms_upload(upload, monkeypatch):
 async def test_storage_connection_failure_is_consistent_across_upload_stages(upload, monkeypatch, stage):
     operation = "upload_file" if stage == "transfer" else "head_object_size"
     monkeypatch.setattr(uploads.storage, operation, AsyncMock(side_effect=OSError("connection failed")))
-    operation_call = (
-        send(b"hello")
-        if stage == "transfer"
-        else uploads.complete_upload(ASSET_ID, Principal(id=USER_ID, subject="test", embeddings_enabled=False))
-    )
+    operation_call = send(b"hello") if stage == "transfer" else uploads.complete_upload(ASSET_ID, SUBJECT)
     with pytest.raises(ApiError) as error:
         await operation_call
     assert error.value.status_code == 502

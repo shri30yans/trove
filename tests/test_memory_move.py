@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 from starlette.requests import Request
 
-from app.auth import Principal
+from app.auth import VerifiedSubject
 from app.errors import ApiError
 from app.routes import memory_lifecycle
 from app.schemas import MoveMemoryRequest
@@ -17,6 +17,7 @@ USER = uuid.UUID("00000000-0000-4000-8000-000000000001")
 MEMORY = uuid.UUID("00000000-0000-4000-8000-000000000002")
 SOURCE = uuid.UUID("00000000-0000-4000-8000-000000000003")
 TARGET = uuid.UUID("00000000-0000-4000-8000-000000000004")
+SUBJECT = VerifiedSubject(subject="synthetic")
 
 
 def request():
@@ -39,18 +40,17 @@ def connection(monkeypatch):
     )
 
     @asynccontextmanager
-    async def transaction():
-        yield connection
+    async def authenticated_transaction(subject):
+        assert subject == SUBJECT
+        yield connection, USER
 
-    monkeypatch.setattr(memory_lifecycle, "transaction", transaction)
+    monkeypatch.setattr(memory_lifecycle, "authenticated_transaction", authenticated_transaction)
     monkeypatch.setattr(memory_lifecycle, "read_back", AsyncMock(return_value={"id": str(MEMORY)}))
     return connection
 
 
 async def move():
-    return await memory_lifecycle.move_memory(
-        request(), str(MEMORY), Principal(id=str(USER), subject="synthetic", embeddings_enabled=False)
-    )
+    return await memory_lifecycle.move_memory(request(), str(MEMORY), SUBJECT)
 
 
 async def test_move_locks_owned_memory_and_changes_only_selected_memberships(connection):

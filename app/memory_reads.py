@@ -18,7 +18,7 @@ import re
 import uuid
 from collections.abc import Mapping
 
-from app.auth import AUTH_SUBJECT_CTE, Principal, VerifiedSubject, as_uuid, resolve_auth_state
+from app.auth import AUTH_SUBJECT_CTE, VerifiedSubject, as_uuid, resolve_auth_state
 from app.db import fetch, fetchrow
 from app.domain.retrieval import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT, LIST_MIN_LIMIT, parse_limit
 from app.errors import ApiError, iso_milliseconds
@@ -106,19 +106,6 @@ async def read_back(user_id: uuid.UUID, memory_id: uuid.UUID) -> MemoryDetail:
     between the write and this read is the same 404 any other missing Memory is.
     """
     memory = await read_memory(user_id, memory_id)
-    if memory is None:
-        raise ApiError(404, "memory_not_found", "Memory not found.")
-    return memory
-
-
-async def get_memory_detail(
-    memory_id: str,
-    principal: Principal,
-    *,
-    record_opened: bool = False,
-) -> MemoryDetail:
-    """Read one caller-owned memory, optionally recording an in-app open event."""
-    memory = await read_memory(uuid.UUID(principal.id), as_uuid(memory_id), record_opened=record_opened)
     if memory is None:
         raise ApiError(404, "memory_not_found", "Memory not found.")
     return memory

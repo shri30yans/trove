@@ -13,9 +13,16 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import Field
 
 from app import storage
-from app.auth import Principal, as_uuid, require_auth
+from app.auth import (
+    AUTH_SUBJECT_CTE,
+    VerifiedSubject,
+    as_uuid,
+    authenticated_transaction,
+    require_subject,
+    resolve_auth_state,
+)
 from app.config import get_config
-from app.db import execute, fetchrow, transaction
+from app.db import execute, fetchrow
 from app.domain.enums import AssetStatus
 from app.domain.plans import StoragePlan, get_storage_plan
 from app.errors import ApiError, ApiJSONResponse, respond
@@ -32,7 +39,7 @@ from app.upload_transfer import (
 )
 
 logger = logging.getLogger("trove.uploads")
-router = APIRouter(dependencies=[Depends(require_auth)])
+router = APIRouter()
 _MIME = re.compile(r"^[\w.+-]+/[\w.+-]+$")
 
 
@@ -63,16 +70,15 @@ def _plan_or_error(plan_id: str) -> StoragePlan:
 
 
 @router.post("/uploads")
-async def create_upload(request: Request, principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
+async def create_upload(request: Request, subject: VerifiedSubject = Depends(require_subject)) -> ApiJSONResponse:
     payload = await parse_body(CreateUploadRequest, request, "invalid_upload", "Invalid upload.")
     config = get_config()
     if payload.byteSize > config.MAX_UPLOAD_BYTES:
         raise ApiError(413, "upload_too_large", "This file is larger than the configured upload limit.")
     if not _MIME.match(payload.mimeType):
         raise ApiError(400, "invalid_mime_type", "A valid MIME type is required.")
-    user_id = uuid.UUID(principal.id)
-    object_key = storage.new_object_key(str(user_id), payload.filename)
-    async with transaction() as connection:
+    async with authenticated_transaction(subject) as (connection, user_id):
+        object_key = storage.new_object_key(str(user_id), payload.filename)
         account = await connection.fetchrow("SELECT storage_plan FROM app_users WHERE id=$1 FOR UPDATE", user_id)
         if account is None:
             raise ApiError(500, "account_not_found", "The account plan could not be loaded.")
@@ -111,18 +117,28 @@ async def create_upload(request: Request, principal: Principal = Depends(require
 
 @router.put("/uploads/{asset_id}/content")
 async def upload_content(
-    asset_id: str, request: Request, principal: Principal = Depends(require_auth)
+    asset_id: str, request: Request, subject: VerifiedSubject = Depends(require_subject)
 ) -> ApiJSONResponse:
     """Authenticated, bounded streaming upload; storage credentials stay on the API."""
-    user_id = uuid.UUID(principal.id)
     asset = await fetchrow(
-        """SELECT a.object_key, a.byte_size, a.mime_type, a.status, u.storage_plan
-           FROM assets a JOIN app_users u ON u.id=a.user_id
-           WHERE a.id=$1 AND a.user_id=$2""",
+        f"""WITH {AUTH_SUBJECT_CTE}
+            SELECT a.deleted, a.deletion_pending, a.user_id, found.object_key, found.byte_size,
+              found.mime_type, found.status, found.storage_plan
+            FROM auth a
+            LEFT JOIN LATERAL (
+              SELECT a2.object_key, a2.byte_size, a2.mime_type, a2.status, u.storage_plan
+              FROM assets a2 JOIN app_users u ON u.id=a2.user_id
+              WHERE a2.id=$4 AND a2.user_id=a.user_id
+            ) found ON NOT a.deleted AND NOT a.deletion_pending AND a.user_id IS NOT NULL""",
+        subject.subject,
+        subject.email,
+        subject.display_name,
         as_uuid(asset_id),
-        user_id,
     )
-    if asset is None:
+    if asset is None:  # pragma: no cover - the auth anchor always yields exactly one row
+        raise ApiError(500, "internal_error", "The request could not be completed.")
+    user_id = resolve_auth_state(asset)
+    if asset["object_key"] is None:
         raise ApiError(404, "upload_not_found", "Upload not found.")
     record = TransferRecord.from_row(asset)
     if record.status == AssetStatus.UPLOADED or record.status == AssetStatus.ATTACHED:
@@ -161,14 +177,24 @@ async def upload_content(
 
 
 @router.post("/uploads/{asset_id}/complete")
-async def complete_upload(asset_id: str, principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
-    user_id = uuid.UUID(principal.id)
+async def complete_upload(asset_id: str, subject: VerifiedSubject = Depends(require_subject)) -> ApiJSONResponse:
     asset = await fetchrow(
-        "SELECT object_key, byte_size, status FROM assets WHERE id=$1 AND user_id=$2",
+        f"""WITH {AUTH_SUBJECT_CTE}
+            SELECT a.deleted, a.deletion_pending, a.user_id, found.object_key, found.byte_size, found.status
+            FROM auth a
+            LEFT JOIN LATERAL (
+              SELECT a2.object_key, a2.byte_size, a2.status FROM assets a2
+              WHERE a2.id=$4 AND a2.user_id=a.user_id
+            ) found ON NOT a.deleted AND NOT a.deletion_pending AND a.user_id IS NOT NULL""",
+        subject.subject,
+        subject.email,
+        subject.display_name,
         as_uuid(asset_id),
-        user_id,
     )
-    if asset is None:
+    if asset is None:  # pragma: no cover - the auth anchor always yields exactly one row
+        raise ApiError(500, "internal_error", "The request could not be completed.")
+    user_id = resolve_auth_state(asset)
+    if asset["object_key"] is None:
         raise ApiError(404, "upload_not_found", "Upload not found.")
     record = UploadRecord.from_row(asset)
     if record.status == AssetStatus.UPLOADED or record.status == AssetStatus.ATTACHED:

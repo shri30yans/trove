@@ -10,10 +10,8 @@ from fastapi import APIRouter, Depends, Request
 
 from app.auth import (
     AUTH_SUBJECT_CTE,
-    Principal,
     VerifiedSubject,
     as_uuid,
-    require_auth,
     require_subject,
     resolve_auth_state,
 )
@@ -38,40 +36,60 @@ def _uuids(values: list[str]) -> list[uuid.UUID]:
     return [uuid.UUID(value) for value in values]
 
 
-async def _owns_all(user_id: uuid.UUID, ids: list[str], table: str) -> bool:
-    """Whether every id is this account's to attach: an undeleted Space or a completed upload.
+async def _ownership_standing(
+    subject: VerifiedSubject,
+    idempotency_key: str | None,
+    space_ids: list[str],
+    asset_ids: list[str],
+) -> tuple[uuid.UUID, uuid.UUID | None, int, int]:
+    """Resolve the caller, a duplicate save, and attachment ownership in one round trip.
 
-    A write that goes through this check repeats the same predicate inside its own transaction, so a
-    row deleted in between is dropped rather than attached.
+    Returns the caller's id, the id of a live memory already saved under this idempotency
+    key, and how many of the candidate Spaces and uploads are actually attachable. Comparing
+    those counts against the de-duplicated request lists is what keeps a foreign id out.
     """
-    values = _unique(ids)
-    if not values:
-        return True
-    sql = (
-        "SELECT id FROM spaces WHERE user_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL"
-        if table == "spaces"
-        else "SELECT id FROM assets WHERE user_id = $1 AND id = ANY($2::uuid[]) AND status = 'uploaded'"
+    row = await fetchrow(
+        f"""WITH {AUTH_SUBJECT_CTE}
+            SELECT (SELECT deleted FROM auth) AS deleted,
+              (SELECT deletion_pending FROM auth) AS deletion_pending,
+              (SELECT user_id FROM auth) AS user_id,
+              (SELECT id FROM memories
+               WHERE user_id=(SELECT user_id FROM auth) AND idempotency_key=$4 AND deleted_at IS NULL
+              ) AS existing_id,
+              (SELECT count(*)::int FROM spaces
+               WHERE user_id=(SELECT user_id FROM auth) AND id=ANY($5::uuid[]) AND deleted_at IS NULL
+              ) AS spaces_found,
+              (SELECT count(*)::int FROM assets
+               WHERE user_id=(SELECT user_id FROM auth) AND id=ANY($6::uuid[]) AND status='uploaded'
+              ) AS assets_found
+            FROM auth""",
+        subject.subject,
+        subject.email,
+        subject.display_name,
+        idempotency_key,
+        _uuids(_unique(space_ids)),
+        _uuids(_unique(asset_ids)),
     )
-    return len(await fetch(sql, user_id, _uuids(values))) == len(values)
+    if row is None:  # pragma: no cover - the auth anchor always yields exactly one row
+        raise ApiError(500, "internal_error", "The request could not be completed.")
+    return resolve_auth_state(row), row["existing_id"], int(row["spaces_found"]), int(row["assets_found"])
 
 
 @router.post("/memories")
-async def create_memory(request: Request, principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
+async def create_memory(request: Request, subject: VerifiedSubject = Depends(require_subject)) -> ApiJSONResponse:
     payload = await parse_body(CreateMemoryRequest, request, "invalid_memory", "Invalid Memory.")
-    user_id = uuid.UUID(principal.id)
     header = request.headers.get("idempotency-key")
     idempotency_key = header.strip()[:128] if header else None
-    if idempotency_key:
-        existing = await fetchrow(
-            "SELECT id FROM memories WHERE user_id=$1 AND idempotency_key=$2 AND deleted_at IS NULL",
-            user_id,
-            idempotency_key,
-        )
-        if existing:
-            return respond({"memory": await read_back(user_id, existing["id"]), "duplicate": True})
-    if not await _owns_all(user_id, payload.spaceIds, "spaces"):
+    space_ids = _unique(payload.spaceIds)
+    asset_ids = _unique(payload.assetIds)
+    user_id, existing_id, spaces_found, assets_found = await _ownership_standing(
+        subject, idempotency_key, space_ids, asset_ids
+    )
+    if idempotency_key and existing_id is not None:
+        return respond({"memory": await read_back(user_id, existing_id), "duplicate": True})
+    if spaces_found != len(space_ids):
         raise ApiError(400, "invalid_space", "One or more Spaces do not belong to this account.")
-    if not await _owns_all(user_id, payload.assetIds, "assets"):
+    if assets_found != len(asset_ids):
         raise ApiError(400, "invalid_asset", "One or more uploads are unavailable or not complete.")
 
     captured_at = parse_timestamp(payload.capturedAt)
@@ -183,11 +201,12 @@ async def get_memory(memory_id: str, subject: VerifiedSubject = Depends(require_
 
 @router.patch("/memories/{memory_id}")
 async def update_memory(
-    request: Request, memory_id: str, principal: Principal = Depends(require_auth)
+    request: Request, memory_id: str, subject: VerifiedSubject = Depends(require_subject)
 ) -> ApiJSONResponse:
     payload = await parse_body(UpdateMemoryRequest, request, "invalid_memory_update", "Invalid update.")
-    user_id = uuid.UUID(principal.id)
-    if payload.spaceIds is not None and not await _owns_all(user_id, payload.spaceIds, "spaces"):
+    space_ids = _unique(payload.spaceIds) if payload.spaceIds is not None else []
+    user_id, _, spaces_found, _ = await _ownership_standing(subject, None, space_ids, [])
+    if payload.spaceIds is not None and spaces_found != len(space_ids):
         raise ApiError(400, "invalid_space", "One or more Spaces do not belong to this account.")
     target = as_uuid(memory_id)
     async with transaction() as connection:

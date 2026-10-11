@@ -93,10 +93,13 @@ async def test_memory_detail_query_does_not_record_open_for_non_open_callers(mon
 
 
 async def test_mcp_memory_detail_reads_without_recording_an_open(monkeypatch):
-    from app.auth import Principal
+    from app.auth import VerifiedSubject
 
     fetchrow = AsyncMock(
         return_value={
+            "deleted": False,
+            "deletion_pending": False,
+            "user_id": USER,
             "id": MEMORY,
             "kind": "text",
             "status": "ready",
@@ -121,12 +124,10 @@ async def test_mcp_memory_detail_reads_without_recording_an_open(monkeypatch):
     )
     monkeypatch.setattr(memory_reads, "fetchrow", fetchrow)
 
-    result = await memory_reads.get_memory_detail(
-        str(MEMORY), Principal(id=str(USER), subject="synthetic", embeddings_enabled=False)
-    )
+    result = await memory_reads.get_memory_detail_for_subject(str(MEMORY), VerifiedSubject(subject="synthetic"))
 
     assert result.id == str(MEMORY)
-    query, _, _, record_opened = fetchrow.call_args.args
+    query, _, _, _, _, record_opened = fetchrow.call_args.args
     assert record_opened is False
     assert "UPDATE memories" in query
     assert "INSERT INTO memory_events" in query

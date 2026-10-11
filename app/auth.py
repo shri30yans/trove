@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import Any
 
@@ -13,7 +14,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from app.config import get_config
-from app.db import fetchrow
+from app.db import fetchrow, transaction
 from app.errors import ApiError
 
 # Only asymmetric algorithms are accepted from a remote JWKS so that a public key can never be
@@ -162,6 +163,30 @@ def resolve_auth_state(row: Mapping[str, Any]) -> uuid.UUID:
     if user_id is None:  # pragma: no cover - the guarded upsert provides the row
         raise _INVALID_TOKEN
     return user_id if isinstance(user_id, uuid.UUID) else uuid.UUID(str(user_id))
+
+
+@asynccontextmanager
+async def authenticated_transaction(subject: VerifiedSubject) -> AsyncIterator[tuple[Any, uuid.UUID]]:
+    """Open a transaction whose first statement resolves the caller, yielding both.
+
+    Multi-statement writes keep their transaction and lose their separate authentication round
+    trip: the account resolution runs on the transaction's own connection before the first
+    domain statement, and the same deletion gates apply.
+    """
+    async with transaction() as connection:
+        record = await connection.fetchrow(
+            f"""WITH {AUTH_SUBJECT_CTE}
+                SELECT (SELECT deleted FROM auth) AS deleted,
+                  (SELECT deletion_pending FROM auth) AS deletion_pending,
+                  (SELECT user_id FROM auth) AS user_id
+                FROM auth""",
+            subject.subject,
+            subject.email,
+            subject.display_name,
+        )
+        if record is None:  # pragma: no cover - the auth anchor always yields exactly one row
+            raise ApiError(500, "internal_error", "The request could not be completed.")
+        yield connection, resolve_auth_state(dict(record))
 
 
 async def _principal_from_request(request: Request, *, allow_deleted: bool = False) -> Principal:

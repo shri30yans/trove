@@ -15,14 +15,13 @@ from fastapi import APIRouter, Depends, Request, Response
 
 from app.auth import (
     AUTH_SUBJECT_CTE,
-    Principal,
     VerifiedSubject,
     as_uuid,
-    require_auth,
+    authenticated_transaction,
     require_subject,
     resolve_auth_state,
 )
-from app.db import fetchrow, transaction
+from app.db import fetchrow
 from app.domain.enums import MemoryStatus
 from app.errors import ApiError, ApiJSONResponse, respond
 from app.memory_reads import read_back
@@ -74,10 +73,9 @@ async def delete_memory(memory_id: str, subject: VerifiedSubject = Depends(requi
 
 
 @router.post("/memories/{memory_id}/restore")
-async def restore_memory(memory_id: str, principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
-    user_id = uuid.UUID(principal.id)
+async def restore_memory(memory_id: str, subject: VerifiedSubject = Depends(require_subject)) -> ApiJSONResponse:
     target = as_uuid(memory_id)
-    async with transaction() as connection:
+    async with authenticated_transaction(subject) as (connection, user_id):
         await _lock_processing_job(connection, user_id, target)
         result = await connection.fetchrow(
             "UPDATE memories SET deleted_at=NULL, updated_at=now() WHERE id=$1 AND user_id=$2 AND deleted_at IS NOT NULL RETURNING status",
@@ -97,10 +95,9 @@ async def restore_memory(memory_id: str, principal: Principal = Depends(require_
 
 
 @router.post("/memories/{memory_id}/retry")
-async def retry_memory(memory_id: str, principal: Principal = Depends(require_auth)) -> ApiJSONResponse:
-    user_id = uuid.UUID(principal.id)
+async def retry_memory(memory_id: str, subject: VerifiedSubject = Depends(require_subject)) -> ApiJSONResponse:
     target = as_uuid(memory_id)
-    async with transaction() as connection:
+    async with authenticated_transaction(subject) as (connection, user_id):
         await _lock_processing_job(connection, user_id, target)
         result = await connection.fetchrow(
             "UPDATE memories SET status='queued', processing_error=NULL WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL AND status='failed' RETURNING id",
@@ -115,13 +112,13 @@ async def retry_memory(memory_id: str, principal: Principal = Depends(require_au
 
 @router.post("/memories/{memory_id}/move")
 async def move_memory(
-    request: Request, memory_id: str, principal: Principal = Depends(require_auth)
+    request: Request, memory_id: str, subject: VerifiedSubject = Depends(require_subject)
 ) -> ApiJSONResponse:
     payload = await parse_body(
         MoveMemoryRequest, request, "invalid_memory_move", "Choose a source and destination Space."
     )
-    user_id, target = uuid.UUID(principal.id), as_uuid(memory_id)
-    async with transaction() as connection:
+    target = as_uuid(memory_id)
+    async with authenticated_transaction(subject) as (connection, user_id):
         memory = await connection.fetchrow(
             "SELECT id FROM memories WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL FOR UPDATE",
             target,

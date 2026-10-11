@@ -68,7 +68,7 @@ async def current_subject() -> VerifiedSubject:
     """Resolve the verified MCP token's subject without a database round trip.
 
     The tool's own query resolves the account and enforces deletion state in the same round
-    trip, so MCP reads save the lookup `current_principal` used to perform.
+    trip, so MCP reads never pay a separate lookup.
     """
     token = get_access_token()
     if token is None or not token.subject:

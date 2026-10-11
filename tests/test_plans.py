@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from starlette.requests import Request
 
-from app.auth import Principal, VerifiedSubject
+from app.auth import VerifiedSubject
 from app.domain.plans import FREE_PLAN, PAID_PLAN, get_storage_plan
 from app.errors import ApiError
 from app.routes import accounts, uploads
@@ -81,15 +81,16 @@ def upload_request(payload: dict) -> Request:
 
 async def call_create_upload(monkeypatch, connection: FakeConnection, byte_size: int):
     @asynccontextmanager
-    async def transaction():
-        yield connection
+    async def authenticated_transaction(subject):
+        assert subject == VerifiedSubject(subject="test")
+        yield connection, uuid.UUID(USER_ID)
 
-    monkeypatch.setattr(uploads, "transaction", transaction)
+    monkeypatch.setattr(uploads, "authenticated_transaction", authenticated_transaction)
     monkeypatch.setattr(uploads.storage, "new_object_key", lambda user, name: f"{user}/{name}")
     monkeypatch.setattr(uploads, "get_config", lambda: SimpleNamespace(MAX_UPLOAD_BYTES=52_428_800))
     return await uploads.create_upload(
         upload_request({"filename": "synthetic.bin", "mimeType": "application/octet-stream", "byteSize": byte_size}),
-        Principal(id=USER_ID, subject="test", embeddings_enabled=False),
+        VerifiedSubject(subject="test"),
     )
 
 

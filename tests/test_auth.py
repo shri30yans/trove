@@ -402,3 +402,53 @@ def test_the_jwks_client_is_built_with_arguments_pyjwt_accepts(install_config) -
         assert isinstance(auth._jwks_client(), jwt.PyJWKClient)
     finally:
         auth._jwks_client.cache_clear()
+
+
+async def test_authenticated_transaction_resolves_the_caller_on_its_own_connection(monkeypatch) -> None:
+    from contextlib import asynccontextmanager
+
+    user_id = uuid.uuid4()
+    queries: list[str] = []
+
+    class FakeConnection:
+        async def fetchrow(self, sql: str, *args):
+            queries.append(" ".join(sql.split()))
+            assert args[:3] == ("subject-1", "mail@example.test", "Name")
+            return {
+                "deleted": False,
+                "deletion_pending": False,
+                "user_id": user_id,
+            }
+
+    @asynccontextmanager
+    async def transaction():
+        yield FakeConnection()
+
+    monkeypatch.setattr(auth, "transaction", transaction)
+
+    subject = auth.VerifiedSubject(subject="subject-1", email="mail@example.test", display_name="Name")
+    async with auth.authenticated_transaction(subject) as (connection, resolved):
+        assert isinstance(connection, FakeConnection)
+        assert resolved == user_id
+
+    assert len(queries) == 1
+    assert "INSERT INTO app_users (auth_subject, email, display_name)" in queries[0]
+
+
+async def test_authenticated_transaction_refuses_a_tombstoned_subject(monkeypatch) -> None:
+    from contextlib import asynccontextmanager
+
+    class FakeConnection:
+        async def fetchrow(self, _sql: str, *_args):
+            return {"deleted": True, "deletion_pending": False, "user_id": None}
+
+    @asynccontextmanager
+    async def transaction():
+        yield FakeConnection()
+
+    monkeypatch.setattr(auth, "transaction", transaction)
+
+    with pytest.raises(ApiError) as raised:
+        async with auth.authenticated_transaction(auth.VerifiedSubject(subject="gone")):
+            raise AssertionError("a tombstoned subject must not enter the transaction body")
+    assert raised.value.code == "account_deleted"

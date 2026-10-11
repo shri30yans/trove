@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app import memory_reads
-from app.auth import Principal, VerifiedSubject
+from app.auth import VerifiedSubject
 from app.embedding import embeddings
 from app.errors import dump_json
 from app.routes import accounts, memories, search, spaces
@@ -134,11 +134,6 @@ CARD_JSON = (
 MODEL_SET = type("ModelSet", (), {"space_id": "synthetic-space"})()
 
 
-@pytest.fixture
-def principal() -> Principal:
-    return Principal(id=str(USER), subject="synthetic", embeddings_enabled=False)
-
-
 async def test_memory_detail_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         memory_reads,
@@ -186,7 +181,7 @@ async def test_memory_list_page_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-async def test_a_full_page_names_the_row_to_resume_from(principal: Principal, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_full_page_names_the_row_to_resume_from(monkeypatch: pytest.MonkeyPatch) -> None:
     """The cursor is the wire timestamp and the identifier, base64url without padding."""
     monkeypatch.setattr(
         memory_reads,
