@@ -1,8 +1,8 @@
 import { MemoryImage } from '../../components/memory-image';
-import { useState, type ComponentProps } from 'react';
+import { useEffect, useMemo, useState, type ComponentProps } from 'react';
 import {
-  ActivityIndicator, Alert, Linking, Pressable, Share, useWindowDimensions,
-  StyleSheet, Text, View,
+  ActivityIndicator, Alert, Animated, Linking, PanResponder, Pressable, Share, useWindowDimensions,
+  ScrollView, StyleSheet, Text, View,
 } from 'react-native';
 import { downloadMedia } from '../../api/media';
 import * as Sharing from 'expo-sharing';
@@ -37,7 +37,7 @@ function MemoryDetailContent({ memory, related, spaces, loading, error, feedback
   const noteDraft = draft.value === draft.base ? savedNote : draft.value;
   const setNoteDraft = (value: string) => setDraft({ base: savedNote, value });
   const noteDirty = noteDraft !== savedNote;
-  const [menu, setMenu] = useState<'actions' | 'delete' | 'discard' | 'tags' | 'similar' | 'info' | null>(null);
+  const [menu, setMenu] = useState<'actions' | 'delete' | 'discard' | 'tags' | 'spaces' | 'similar' | 'info' | null>(null);
   const [tagDraft, setTagDraft] = useState<string[]>(memory?.tags ?? []);
   const [tagsSaving, setTagsSaving] = useState(false);
   const [dockExpanded, setDockExpanded] = useState(false);
@@ -109,20 +109,19 @@ function MemoryDetailContent({ memory, related, spaces, loading, error, feedback
     catch (error) { setDeleteError(error instanceof Error ? error.message : 'Could not delete this memory.'); }
     finally { setDeleting(false); }
   };
+  const tagAction = () => { setTagDraft(memory.tags ?? []); setMenu('tags'); };
+  const deleteAction = () => { setDeleteError(null); setMenu('delete'); };
+  const actionItems: MemoryAction[] = [
+    { label: 'Add or edit tags', icon: 'pricetag-outline', onPress: tagAction, disabled: !!memory.localPending },
+    { label: 'Manage Spaces', icon: 'folder-open-outline', onPress: () => setMenu('spaces'), disabled: !!memory.localPending },
+    { label: 'Share memory', icon: 'share-outline', onPress: shareMemory },
+    { label: 'Similar memories', icon: 'sparkles-outline', onPress: () => setMenu('similar') },
+    { label: 'Memory details', icon: 'information-circle-outline', onPress: () => setMenu('info') },
+    { label: editingNote ? 'Editing note' : 'Edit note', icon: 'create-outline', onPress: () => setEditingNote(true), disabled: !!memory.localPending },
+    { label: 'Delete memory', icon: 'trash-outline', onPress: deleteAction, destructive: true, disabled: !!memory.localPending },
+  ];
   return (
-    <FormScreen contentContainerStyle={styles.detailContent} footer={<View style={styles.dock}>
-      <View style={styles.dockRow}>
-        <DockAction icon="sparkles-outline" label="Similar" onPress={() => setMenu('similar')} />
-        <DockAction icon="pricetag-outline" label="Tags" onPress={() => { setTagDraft(memory.tags ?? []); setMenu('tags'); }} />
-        <DockAction icon="information-circle-outline" label="Info" onPress={() => setMenu('info')} />
-        <IconButton icon={dockExpanded ? 'chevron-down' : 'chevron-up'} variant="plain" onPress={() => setDockExpanded((open) => !open)} accessibilityLabel={dockExpanded ? 'Collapse memory actions' : 'Expand memory actions'} />
-      </View>
-      {dockExpanded && <View style={styles.expandedDock}>
-        <Button label="Share" icon="share-outline" variant="quiet" size="compact" onPress={shareMemory} />
-        <Button label={editingNote ? 'Editing note' : 'Edit note'} icon="create-outline" variant="quiet" size="compact" disabled={!!memory.localPending} onPress={() => setEditingNote(true)} />
-        <Button label="More actions" icon="ellipsis-horizontal" variant="quiet" size="compact" onPress={() => setMenu('actions')} />
-      </View>}
-    </View>} header={<ScreenHeader title={memoryTitle(memory)} onBack={closeEditor} actions={<><IconButton icon="search-outline" variant="plain" onPress={onSearch} accessibilityLabel="Search memories" /><IconButton icon="ellipsis-horizontal" variant="plain" disabled={noteSaving || deleting} onPress={() => setMenu('actions')} accessibilityLabel="Memory actions" /></>} />}>
+    <FormScreen contentContainerStyle={styles.detailContent} footer={<MemoryActionDock expanded={dockExpanded} onExpandedChange={setDockExpanded} actions={actionItems} />} header={<ScreenHeader title={memoryTitle(memory)} onBack={closeEditor} actions={<><IconButton icon="search-outline" variant="plain" onPress={onSearch} accessibilityLabel="Search memories" /><IconButton icon="ellipsis-horizontal" variant="plain" disabled={noteSaving || deleting} onPress={() => setMenu('actions')} accessibilityLabel="Memory actions" /></>} />}>
         {error && <Notice title="Could not load memory details" body={error} />}
         {memory.localPending && <View style={styles.syncRow}>
           <Ionicons name={memory.localSyncState === 'uploading' ? 'cloud-upload-outline' : 'cloud-offline-outline'} size={15} color={memory.localSyncState === 'blocked' ? colors.danger : colors.muted} />
@@ -145,7 +144,7 @@ function MemoryDetailContent({ memory, related, spaces, loading, error, feedback
         </View>
 
         <View style={styles.detailSection}><Text style={styles.detailMuted}>{kindLabels[memory.kind]} · Saved {dateLabel}{source ? ` · ${source}` : ''}</Text></View>
-        {!!memory.tags?.length && <View accessibilityLabel="Memory tags" style={styles.tagRail}>{memory.tags.map((tag) => <Pressable key={tag} onPress={() => onSearchTag(tag)} accessibilityRole="button" accessibilityLabel={`Find memories tagged ${tag}`} style={styles.tagButton}><Tag label={tag} icon="pricetag-outline" /></Pressable>)}</View>}
+        {!!memory.tags?.length && <View accessibilityLabel="Memory tags" style={styles.tagRail}>{memory.tags.map((tag) => <Pressable key={tag} onPress={() => onSearchTag(tag)} accessibilityRole="button" accessibilityLabel={`Find memories tagged ${tag}`} style={styles.tagButton}><Tag label={tag} icon="pricetag-outline" tone="surface" /></Pressable>)}</View>}
 
         {!memory.localPending && <View style={styles.detailSection}><View style={styles.detailSectionHeader}><Eyebrow label="Spaces" /></View>
           <View style={styles.spaceList}>{spaces.length ? spaces.map((space) => {
@@ -166,7 +165,7 @@ function MemoryDetailContent({ memory, related, spaces, loading, error, feedback
           </View>) : <Text style={styles.detailMuted}>{embeddingState.state === 'available' ? 'Related memories will appear here as you save more.' : embeddingState.state === 'disabled' ? 'Related memories are off for this account.' : 'Related memories are unavailable right now.'}</Text>}
         </View>}
 
-      {menu && <ActionSheet title={menu === 'delete' ? 'Delete memory?' : menu === 'discard' ? 'Unsaved changes' : menu === 'tags' ? 'Add or edit tags' : menu === 'similar' ? 'Similar memories' : menu === 'info' ? 'Memory details' : 'Memory actions'} onClose={() => setMenu(null)} busy={deleting || tagsSaving}>
+      {menu && <ActionSheet title={menu === 'delete' ? 'Delete memory?' : menu === 'discard' ? 'Unsaved changes' : menu === 'tags' ? 'Add or edit tags' : menu === 'spaces' ? 'Manage Spaces' : menu === 'similar' ? 'Similar memories' : menu === 'info' ? 'Memory details' : 'Memory actions'} onClose={() => setMenu(null)} busy={deleting || tagsSaving}>
         {menu === 'actions' ? <>
           <Button label="Add or edit tags" icon="pricetag-outline" variant="secondary" fills disabled={!!memory.localPending} onPress={() => { setTagDraft(memory.tags ?? []); setMenu('tags'); }} />
           <Button label="Share memory" icon="share-outline" variant="secondary" fills onPress={() => { setMenu(null); shareMemory(); }} />
@@ -175,6 +174,13 @@ function MemoryDetailContent({ memory, related, spaces, loading, error, feedback
           <Text style={styles.detailMuted}>Choose a tag you already use or create a new one. Tags stay private to your account.</Text>
           <MemoryTagEditor tags={tagDraft} onChange={setTagDraft} disabled={tagsSaving} />
           <Button label="Save tags" fills loading={tagsSaving} disabled={tagDraft.length > 20 || tagDraft.some((tag) => tag.length > 40)} onPress={() => void saveTags()} />
+        </> : menu === 'spaces' ? <>
+          <Text style={styles.detailMuted}>Choose the Spaces where this memory should appear.</Text>
+          <View style={styles.spaceList}>{spaces.length ? spaces.map((space) => {
+            const selected = savedSpaces.some((saved) => saved.id === space.id);
+            return <Pressable key={space.id} onPress={() => onToggleSpace(memory, space.id)} accessibilityRole="button" accessibilityState={{ selected }} accessibilityLabel={`${selected ? 'Remove from' : 'Add to'} ${space.name}`} style={({ pressed }) => [styles.spaceRow, pressed && styles.pressed]}><Ionicons name={selected ? 'checkmark-circle' : 'ellipse-outline'} size={20} color={selected ? colors.blueDeep : colors.muted} /><Text style={styles.spaceName}>{space.name}</Text></Pressable>;
+          }) : <Text style={styles.detailMuted}>You have no Spaces yet.</Text>}</View>
+          <Button label="Create a Space" icon="add" variant="secondary" fills onPress={() => { setMenu(null); onCreateSpace(); }} />
         </> : menu === 'similar' ? <>
           {feedbackError && <Notice body={feedbackError} />}
           {related.length ? related.slice(0, 8).map((item) => <Pressable key={item.id} style={styles.relatedMemoryButton} onPress={() => { setMenu(null); onOpenMemory(item); }} accessibilityRole="button" accessibilityLabel={`Open similar memory ${memoryTitle(item)}`}><Text style={styles.relatedTitle}>{memoryTitle(item)}</Text><Text numberOfLines={2} style={styles.detailMuted}>{memoryDescription(item)}</Text></Pressable>) : <Text style={styles.detailMuted}>{embeddingState.state === 'available' ? 'Similar memories will appear here as your library grows.' : 'Similar memory search is unavailable right now.'}</Text>}
@@ -200,11 +206,16 @@ function MemoryDetailContent({ memory, related, spaces, loading, error, feedback
 
 function makeStyles(colors: Palette) {
   return StyleSheet.create({
-    dock: { paddingTop: spacing.sm, paddingBottom: spacing.xs, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, backgroundColor: colors.surface },
-    dockRow: { minHeight: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
-    dockAction: { minWidth: 62, minHeight: 44, alignItems: 'center', justifyContent: 'center', gap: spacing.xs },
-    dockLabel: { color: colors.secondary, ...text.caption, fontWeight: '600' },
-    expandedDock: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: spacing.sm, paddingTop: spacing.sm, paddingBottom: spacing.xs },
+    dock: { minHeight: 48, marginHorizontal: -layout.gutter, paddingHorizontal: spacing.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: colors.surface, overflow: 'hidden' },
+    dockHandleRow: { height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+    dockHandle: { width: 46, height: 5, borderRadius: 3, backgroundColor: colors.muted },
+    dockContent: { flex: 1 },
+    dockAction: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: spacing.lg, paddingHorizontal: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderSoft },
+    dockActionText: { flex: 1, color: colors.foreground, ...text.button },
+    dockActionIcon: { width: 28, alignItems: 'center' },
+    dockActionLast: { borderBottomWidth: 0 },
+    dockActionDestructive: { color: colors.danger },
+    disabledAction: { opacity: 0.45 },
     galleryStage: { marginHorizontal: -layout.gutter, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
     syncRow: { minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.md },
     syncRowText: { flex: 1, color: colors.muted, ...text.meta },
@@ -245,11 +256,56 @@ function makeStyles(colors: Palette) {
   });
 }
 
-function DockAction({ icon, label, onPress }: { icon: ComponentProps<typeof Ionicons>['name']; label: string; onPress: () => void }) {
+type MemoryAction = {
+  label: string;
+  icon: ComponentProps<typeof Ionicons>['name'];
+  onPress: () => void;
+  disabled?: boolean;
+  destructive?: boolean;
+};
+
+function MemoryActionDock({ expanded, onExpandedChange, actions }: {
+  expanded: boolean;
+  onExpandedChange: (expanded: boolean) => void;
+  actions: MemoryAction[];
+}) {
   const { colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
-  return <Pressable style={styles.dockAction} onPress={onPress} accessibilityRole="button" accessibilityLabel={label}>
-    <Ionicons name={icon} size={19} color={colors.foreground} />
-    <Text style={styles.dockLabel}>{label}</Text>
-  </Pressable>;
+  const { height } = useWindowDimensions();
+  const collapsedHeight = 48;
+  const expandedHeight = Math.min(440, Math.max(280, Math.round(height * 0.58)));
+  const [dockHeight] = useState(() => new Animated.Value(collapsedHeight));
+  const panResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dy) > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+    onPanResponderRelease: (_event, gesture) => {
+      if (gesture.dy < -18) onExpandedChange(true);
+      else if (gesture.dy > 18) onExpandedChange(false);
+      else onExpandedChange(!expanded);
+    },
+  }), [expanded, onExpandedChange]);
+
+  useEffect(() => {
+    const animation = Animated.spring(dockHeight, {
+      toValue: expanded ? expandedHeight : collapsedHeight,
+      damping: 25,
+      stiffness: 240,
+      mass: 0.8,
+      useNativeDriver: false,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [collapsedHeight, dockHeight, expanded, expandedHeight]);
+
+  return <Animated.View style={[styles.dock, { height: dockHeight }]}>
+    <View {...panResponder.panHandlers} style={styles.dockHandleRow} accessible accessibilityRole="button" accessibilityState={{ expanded }} accessibilityLabel={expanded ? 'Collapse memory actions' : 'Expand memory actions'} accessibilityHint="Swipe up to reveal memory actions." accessibilityActions={[{ name: 'activate', label: expanded ? 'Collapse memory actions' : 'Expand memory actions' }]} onAccessibilityAction={({ nativeEvent }) => { if (nativeEvent.actionName === 'activate') onExpandedChange(!expanded); }}>
+      <View style={styles.dockHandle} />
+    </View>
+    {expanded && <ScrollView style={styles.dockContent} accessibilityLabel="Memory actions" keyboardShouldPersistTaps="handled">
+      {actions.map((action, index) => <Pressable key={action.label} onPress={() => { onExpandedChange(false); action.onPress(); }} disabled={action.disabled} accessibilityRole="button" accessibilityLabel={action.label} style={({ pressed }) => [styles.dockAction, index === actions.length - 1 && styles.dockActionLast, pressed && styles.pressed, action.disabled && styles.disabledAction]}>
+        <View style={styles.dockActionIcon}><Ionicons name={action.icon} size={22} color={action.destructive ? colors.danger : colors.foreground} /></View>
+        <Text style={[styles.dockActionText, action.destructive && styles.dockActionDestructive]}>{action.label}</Text>
+      </Pressable>)}
+    </ScrollView>}
+  </Animated.View>;
 }

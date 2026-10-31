@@ -1,3 +1,5 @@
+> **Work in progress.** This is an early snapshot of a private personal memory app, published for reference rather than as a finished product. Expect rough edges, incomplete sections and breaking changes. No production credentials are committed here, but `config.toml` does carry the public production endpoints the app talks to.
+
 # Trove
 
 Trove is a private personal memory app with an Expo client and a Python backend. Supabase provides the hosted Postgres database, the vector extension, the Auth token issuer, and private file storage. One process serves the HTTP API and polls the database-backed memory queue. It sends text and image embedding requests to Gemini Embedding 2 through Vertex AI's native `embedContent` API; there is no generative AI enrichment, local model download, separate worker, or Redis.

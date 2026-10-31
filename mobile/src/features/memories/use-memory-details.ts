@@ -28,6 +28,7 @@ export function useMemoryDetails({ memories, pendingMemories, upsertMemory, remo
   const local = pending ?? (selection?.preview?.localPending && !acknowledged ? selection.preview : null);
   const detailQuery = useQuery({
     queryKey: ['memory', id], enabled: !!id && !local,
+    staleTime: 60_000,
     queryFn: ({ signal }) => {
       if (!id) throw new Error('Select a memory first.');
       return getMemory(id, signal);
@@ -35,6 +36,7 @@ export function useMemoryDetails({ memories, pendingMemories, upsertMemory, remo
   });
   const relatedQuery = useQuery({
     queryKey: ['memory', id, 'related'], enabled: !!id && !local,
+    staleTime: 5 * 60_000,
     queryFn: ({ signal }) => {
       if (!id) throw new Error('Select a memory first.');
       return getRelatedMemories(id, signal);
